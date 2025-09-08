@@ -1,0 +1,12 @@
+<input id="movies" placeholder="Entrez vos films préférés (IDs)">
+<button onclick="getRecommendations()">Voir recommandations</button>
+<div id="results"></div>
+
+<script>
+async function getRecommendations(){
+    const films = document.getElementById("movies").value;
+    const res = await fetch(`http://127.0.0.1:8000/recommendations/?films=${films}`);
+    const data = await res.json();
+    document.getElementById("results").innerText = JSON.stringify(data);
+}
+</script>
