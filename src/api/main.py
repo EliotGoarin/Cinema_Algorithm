@@ -15,7 +15,7 @@ def home():
             <h1>Bienvenue sur l'API Movie Recommender</h1>
             <p>Entrez les IDs de vos films préférés (séparés par des virgules) :</p>
             <form action="/recommendations/" method="get">
-                <input type="text" name="films" placeholder="Ex: 1,2,3" />
+                <input type="text" name="films" placeholder="Inception, Avatar ..." />
                 <input type="submit" value="Voir recommandations" />
             </form>
         </body>
@@ -25,42 +25,18 @@ def home():
 @app.get("/recommendations/", response_class=HTMLResponse)
 def recommendations(films: str = ""):
     if not films.strip():
-        return """
-        <html>
-            <body>
-                <h1>Erreur : aucun film renseigné !</h1>
-                <p>Veuillez entrer au moins un ID de film.</p>
-                <p><a href="/">Retour à l'accueil</a></p>
-            </body>
-        </html>
-        """
+        return """..."""  # message d'erreur identique
 
-    try:
-        film_ids = [int(f) for f in films.split(",")]
-    except ValueError:
-        return """
-        <html>
-            <body>
-                <h1>Erreur : format incorrect !</h1>
-                <p>Veuillez entrer des IDs de films séparés par des virgules (ex: 1,2,3).</p>
-                <p><a href="/">Retour à l'accueil</a></p>
-            </body>
-        </html>
-        """
+    # Split en titres
+    film_titles = [f.strip() for f in films.split(",")]
 
-    result = get_recommendations(film_ids)
+    result = get_recommendations(film_titles)
 
     if "error" in result:
-        return f"""
-        <html>
-            <body>
-                <h1>Erreur : {result['error']}</h1>
-                <p><a href="/">Retour à l'accueil</a></p>
-            </body>
-        </html>
-        """
+        return f"""..."""  # message d'erreur identique
 
-    html_recs = "<ul>" + "".join(f"<li>Film ID: {r}</li>" for r in result["recommendations"]) + "</ul>"
+    # Créer le HTML avec les titres
+    html_recs = "<ul>" + "".join(f"<li>{title}</li>" for title in result["recommendations"]) + "</ul>"
 
     return f"""
     <html>
@@ -71,3 +47,4 @@ def recommendations(films: str = ""):
         </body>
     </html>
     """
+

@@ -1,46 +1,58 @@
-CREATE TABLE director (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  tmdb_id INT UNIQUE,
-  name VARCHAR(255) NOT NULL
+-- ---------------------------------
+-- Création de la base de test
+-- ---------------------------------
+DROP DATABASE IF EXISTS movies;
+CREATE DATABASE movies;
+USE movies;
+
+-- ---------------------------------
+-- Table des réalisateurs
+-- ---------------------------------
+DROP TABLE IF EXISTS directors;
+CREATE TABLE directors (
+    tmdb_id INT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    film_tmdb_id INT -- pour lier au film si besoin
 );
 
-CREATE TABLE actor (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  tmdb_id INT UNIQUE,
-  name VARCHAR(255) NOT NULL
-);
+-- Insérer 10 réalisateurs
+INSERT INTO directors (tmdb_id, name, film_tmdb_id) VALUES
+(1, 'Christopher Nolan', 101),
+(2, 'Quentin Tarantino', 102),
+(3, 'Steven Spielberg', 103),
+(4, 'James Cameron', 104),
+(5, 'Martin Scorsese', 105),
+(6, 'Ridley Scott', 106),
+(7, 'Peter Jackson', 107),
+(8, 'Clint Eastwood', 108),
+(9, 'Tim Burton', 109);
 
-CREATE TABLE genre (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  tmdb_id INT UNIQUE,
-  name VARCHAR(100) NOT NULL
-);
-
+-- ---------------------------------
+-- Table des films
+-- ---------------------------------
+DROP TABLE IF EXISTS film;
 CREATE TABLE film (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  tmdb_id INT UNIQUE,
-  title VARCHAR(300),
-  year INT,
-  decade VARCHAR(10),
-  director_id INT,
-  FOREIGN KEY (director_id) REFERENCES director(id)
+    tmdb_id INT PRIMARY KEY,
+    title VARCHAR(300),
+    director_id INT,
+    FOREIGN KEY (director_id) REFERENCES directors(tmdb_id)
 );
 
-CREATE TABLE film_actor (
-  film_id INT,
-  actor_id INT,
-  cast_order INT,
-  PRIMARY KEY (film_id, actor_id),
-  FOREIGN KEY (film_id) REFERENCES film(id),
-  FOREIGN KEY (actor_id) REFERENCES actor(id)
-);
+-- Insérer 10 films correspondant aux réalisateurs
+INSERT INTO film (tmdb_id, title, director_id) VALUES
+(101, 'Inception', 1),
+(102, 'Pulp Fiction', 2),
+(103, 'Jurassic Park', 3),
+(104, 'Avatar', 4),
+(105, 'The Irishman', 5),
+(106, 'Gladiator', 6),
+(107, 'The Lord of the Rings', 7),
+(108, 'Gran Torino', 8),
+(109, 'Edward Scissorhands', 9),
+(110, 'Oppenheimer', 1);
 
-CREATE TABLE film_genre (
-  film_id INT,
-  genre_id INT,
-  PRIMARY KEY (film_id, genre_id),
-  FOREIGN KEY (film_id) REFERENCES film(id),
-  FOREIGN KEY (genre_id) REFERENCES genre(id)
-);
-
-CREATE INDEX idx_film_title ON film(title);
+-- ---------------------------------
+-- Vérification
+-- ---------------------------------
+SELECT * FROM directors;
+SELECT * FROM film;

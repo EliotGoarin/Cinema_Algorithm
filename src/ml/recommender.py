@@ -17,33 +17,51 @@ TMDB_API_KEY = "TA_CLEF_API"  # Remplace par ta clé TMDb
 # ----- Connexion MySQL -----
 engine = create_engine(
     f"mysql+mysqlconnector://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}",
-    echo=False  # mettre True si tu veux voir les requêtes SQL
+    echo=False
 )
 
 # ----- Charger les films avec réalisateurs et genres -----
 def load_movies():
     # Films + réalisateur
     films_df = pd.read_sql("""
-        SELECT f.id, f.tmdb_id, f.title, f.year, d.name AS director
+        SELECT f.tmdb_id AS film_tmdb_id, f.title, d.name AS director
         FROM film f
-        LEFT JOIN director d ON f.director_id = d.id
+        LEFT JOIN directors d ON f.tmdb_id = d.film_tmdb_id
     """, engine)
 
-    # Genres concaténés
-    genres_df = pd.read_sql("""
-        SELECT fg.film_id, GROUP_CONCAT(g.name SEPARATOR ',') AS genres
-        FROM film_genre fg
-        JOIN genre g ON fg.genre_id = g.id
-        GROUP BY fg.film_id
-    """, engine)
+    # Genres concaténés (si tu as une table genre / film_genre)
+    try:
+        genres_df = pd.read_sql("""
+            SELECT fg.film_id, GROUP_CONCAT(g.name SEPARATOR ',') AS genres
+            FROM film_genre fg
+            JOIN genre g ON fg.genre_id = g.id
+            GROUP BY fg.film_id
+        """, engine)
+        df = films_df.merge(genres_df, left_on='film_tmdb_id', right_on='film_id', how='left')
+    except Exception:
+        df = films_df
+        df['genres'] = ''  # si pas de genres
 
-    df = films_df.merge(genres_df, left_on='id', right_on='film_id', how='left')
     df = df.fillna('')  # valeurs manquantes remplacées par chaîne vide
     return df
 
 # ----- Charger et encoder -----
 df_movies = load_movies()
-df_encoded = pd.get_dummies(df_movies[['director', 'genres']])
+print("Nombre de films chargés :", len(df_movies))
+print(df_movies.head())
+
+# Remplacer les valeurs vides par 'Unknown' pour l'encodage
+df_movies['director'].replace('', 'Unknown', inplace=True)
+df_movies['genres'].replace('', 'Unknown', inplace=True)
+
+# Encoder director et genres séparément
+df_encoded_director = pd.get_dummies(df_movies['director'], prefix='director')
+df_encoded_genres = df_movies['genres'].str.get_dummies(sep=',')
+df_encoded = pd.concat([df_encoded_director, df_encoded_genres], axis=1)
+
+# Vérification
+if df_encoded.empty:
+    raise ValueError("df_encoded est vide ! Vérifie la base de données et load_movies()")
 
 # ----- Créer le modèle k-NN -----
 model = NearestNeighbors(n_neighbors=5, metric='cosine')
@@ -60,20 +78,30 @@ def get_film_info(tmdb_id):
     return {"title": data.get("title"), "poster_path": poster_url}
 
 # ----- Fonction principale -----
-def get_recommendations(film_ids):
+def get_recommendations(film_titles):
     """
-    film_ids: liste des IDs internes de la base (colonne id)
-    Retourne dictionnaire {"recommendations": [tmdb_ids]} ou {"error": msg}
+    film_titles: liste des titres de films (ex: ["Inception", "Avatar"])
+    Retourne dictionnaire {"recommendations": [titres]} ou {"error": msg}
     """
-    # Vérifier que les IDs existent
-    valid_ids = df_movies['id'].tolist()
-    unknown_ids = [f for f in film_ids if f not in valid_ids]
-    if unknown_ids:
-        return {"error": f"Film(s) inconnu(s) : {unknown_ids}"}
+    # Vérifier que les titres existent
+    valid_titles = df_movies['title'].tolist()
+    unknown_titles = [t for t in film_titles if t not in valid_titles]
+    if unknown_titles:
+        return {"error": f"Film(s) inconnu(s) : {unknown_titles}"}
 
-    # Encoder le premier film préféré (prototype simple)
-    fav_encoded = df_encoded[df_movies['id'] == film_ids[0]]
+    # Récupérer le tmdb_id du premier film préféré
+    first_title = film_titles[0]
+    first_tmdb_id = df_movies[df_movies['title'] == first_title]['film_tmdb_id'].values[0]
+
+    # Encoder le premier film préféré
+    fav_encoded = df_encoded[df_movies['film_tmdb_id'] == first_tmdb_id]
     distances, indices = model.kneighbors(fav_encoded)
 
-    recommended_tmdb_ids = df_movies.iloc[indices.flatten()]['tmdb_id'].tolist()
-    return {"recommendations": recommended_tmdb_ids}
+    # Récupérer les titres recommandés
+    recommended_titles = df_movies.iloc[indices.flatten()]['title'].tolist()
+
+    # Exclure les films d'entrée
+    recommended_titles = [t for t in recommended_titles if t not in film_titles]
+
+    return {"recommendations": recommended_titles}
+
