@@ -1,0 +1,9 @@
+requests
+python-dotenv
+SQLAlchemy
+pymysql
+pandas
+scikit-learn
+numpy
+fastapi
+uvicorn
