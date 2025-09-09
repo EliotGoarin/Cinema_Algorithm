@@ -35,8 +35,7 @@ Il combine les données de **The Movie Database (TMDb)** avec un pipeline d’in
 git clone https://github.com/EliotGoarin/Cinema_Algorithm.git
 cd Cinema_Algorithm
 ### 2. Créer un environnement virtuel et installer les dépendances
-bash
-Copier le code
+
 python -m venv .venv
 source .venv/bin/activate    # Linux/Mac
 .venv\Scripts\activate       # Windows
@@ -45,39 +44,31 @@ pip install -r requirements.txt
 ### 3. Configurer l’environnement
 Copier le fichier .env.example → .env et remplir :
 
-env
-Copier le code
 TMDB_API_KEY=ta_clef_tmdb
 DB_URL=mysql+mysqlconnector://user:password@localhost/movies
 ALLOW_ORIGINS=http://localhost:5173
 ### 4. Initialiser la base de données
-bash
-Copier le code
+
 alembic upgrade head
 ### 5. Lancer l’API
-bash
-Copier le code
+
 uvicorn src.api.app:app --reload
 → API disponible sur http://localhost:8000
 
 ### 6. Lancer le frontend
-bash
-Copier le code
+
 cd web
 npm install
 npm run dev
 → Frontend dispo sur http://localhost:5173
 
-🔌 Endpoints principaux
+### 🔌 Endpoints principaux
 GET /healthz → ping de santé
 
 GET /tmdb/search?query=Inception → recherche TMDb
 
 POST /recommend
 Exemple payload :
-
-json
-Copier le code
 {
   "seed_ids": [27205, 157336],
   "k": 10
@@ -128,8 +119,7 @@ TMDb pour leur API
 L’écosystème open-source Python & React
 
 ### 🏗️ Architecture
-bash
-Copier le code
+
 .
 ├── src/                  # Code backend Python
 │   ├── api/              # API FastAPI (routes, CORS, endpoints)
