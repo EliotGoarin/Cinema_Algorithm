@@ -118,23 +118,3 @@ TMDb pour leur API
 
 L’écosystème open-source Python & React
 
-### 🏗️ Architecture
-
-.
-├── src/                  # Code backend Python
-│   ├── api/              # API FastAPI (routes, CORS, endpoints)
-│   ├── core/             # Clients et outils (TMDb, config, etc.)
-│   ├── ingest/           # Scripts d’ingestion TMDb → base SQL
-│   └── ml/               # Moteur de recommandation (k-NN, cache)
-│
-├── web/                  # Client React (interface utilisateur)
-│   ├── src/App.jsx
-│   └── src/apiClient.js
-│
-├── migrations/           # Scripts Alembic (schéma SQL)
-├── alembic.ini           # Config migrations
-├── pyproject.toml        # Packaging & dépendances
-├── requirements.txt      # Dépendances (pip)
-├── env.example           # Variables d’environnement
-├── .gitignore            # Ignore standard (Python, venv, node_modules, etc.)
-└── README.md             # Documentation
