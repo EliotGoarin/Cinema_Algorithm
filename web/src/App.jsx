@@ -1,51 +1,95 @@
 import { useState } from "react";
-import { tmdbSearch, ingestSearchAndAdd, recommend } from "./apiClient";
+import { searchMovies, ingestAndAdd, getRecommendations, refreshCache } from "./apiClient";
 
-export default function App() {
-  const [q, setQ] = useState("Inception");
-  const [seed, setSeed] = useState("27205");
-  const [log, setLog] = useState("");
-  const [recs, setRecs] = useState([]);
+function App() {
+  const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [recommendations, setRecommendations] = useState([]);
+  const [loading, setLoading] = useState(false);
 
-  const onSearch = async () => {
-    setLog("Recherche en cours...");
-    try { setLog(JSON.stringify(await tmdbSearch(q), null, 2)); }
-    catch (e) { setLog("Erreur: " + e.message); }
-  };
+  async function handleSearch() {
+    setLoading(true);
+    try {
+      const data = await searchMovies(query);
+      setSearchResults(data.results || []);
+    } catch (err) {
+      console.error(err);
+      alert("Erreur recherche");
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  const onAdd = async () => {
-    setLog("Ajout en cours...");
-    try { setLog(JSON.stringify(await ingestSearchAndAdd(q), null, 2)); }
-    catch (e) { setLog("Erreur: " + e.message); }
-  };
+  async function handleAdd(title) {
+    setLoading(true);
+    try {
+      const data = await ingestAndAdd(title);
+      alert(`Film ajouté: ${data.movie.title}`);
+    } catch (err) {
+      console.error(err);
+      alert("Erreur ingestion");
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  const onReco = async () => {
-    const ids = seed.split(",").map(s => parseInt(s, 10)).filter(Boolean);
-    try { setRecs((await recommend(ids, 10)).recommendations || []); }
-    catch (e) { setLog("Erreur: " + e.message); }
-  };
+  async function handleRecommend(seedId) {
+    setLoading(true);
+    try {
+      const data = await getRecommendations([seedId], 5);
+      setRecommendations(data.recommendations || []);
+    } catch (err) {
+      console.error(err);
+      alert("Erreur reco");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRefreshCache() {
+    try {
+      await refreshCache();
+      alert("Cache rafraîchi !");
+    } catch (err) {
+      console.error(err);
+      alert("Erreur refresh cache");
+    }
+  }
 
   return (
-    <div style={{ padding: 16, fontFamily: "sans-serif" }}>
-      <h2>🎬 Ingestion TMDB</h2>
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un film..." style={{ marginRight: 8, padding: 4 }}/>
-      <button onClick={onSearch}>Rechercher</button>
-      <button onClick={onAdd} style={{ marginLeft: 8 }}>Chercher + Ajouter</button>
-      <pre style={{ whiteSpace: "pre-wrap", background: "#f5f5f5", padding: 8, marginTop: 8 }}>{log}</pre>
+    <div style={{ padding: "20px" }}>
+      <h1>🎬 Cinema Algorithm</h1>
 
-      <h2 style={{ marginTop: 24 }}>⭐ Recommandations</h2>
-      <input value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="tmdb_id, ex: 27205" style={{ marginRight: 8, padding: 4 }}/>
-      <button onClick={onReco}>Recommander</button>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 140px)", gap: 12, marginTop: 12 }}>
-        {recs.map(r => (
-          <div key={r.tmdb_id} style={{ border: "1px solid #ddd", padding: 8 }}>
-            {r.poster_path && <img src={r.poster_path} alt="" style={{ width: "100%", height: "auto" }} />}
-            <div style={{ fontSize: 12, marginTop: 6 }}>{r.title}</div>
-            <div style={{ color: "#888", fontSize: 11 }}>#{r.tmdb_id}</div>
-          </div>
-        ))}
+      <div>
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher un film..." />
+        <button onClick={handleSearch}>Chercher</button>
+        <button onClick={handleRefreshCache}>Rafraîchir cache</button>
       </div>
+
+      {loading && <p>Chargement...</p>}
+
+      <h2>Résultats</h2>
+      <ul>
+        {searchResults.map((m) => (
+          <li key={m.id}>
+            {m.title} ({m.release_date})
+            <button onClick={() => handleAdd(m.title)}>Ajouter</button>
+            <button onClick={() => handleRecommend(m.id)}>Recommander</button>
+          </li>
+        ))}
+      </ul>
+
+      <h2>Recommandations</h2>
+      <ul>
+        {recommendations.map((r) => (
+          <li key={r.tmdb_id}>
+            {r.title}
+            {r.poster_path && <img src={`https://image.tmdb.org/t/p/w200${r.poster_path}`} alt={r.title} />}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
+
+export default App;
