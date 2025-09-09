@@ -31,10 +31,10 @@ Il combine les données de **The Movie Database (TMDb)** avec un pipeline d’in
 ## ⚙️ Installation & setup
 
 ### 1. Cloner le repo
-```bash
+
 git clone https://github.com/EliotGoarin/Cinema_Algorithm.git
 cd Cinema_Algorithm
-2. Créer un environnement virtuel et installer les dépendances
+### 2. Créer un environnement virtuel et installer les dépendances
 bash
 Copier le code
 python -m venv .venv
@@ -42,7 +42,7 @@ source .venv/bin/activate    # Linux/Mac
 .venv\Scripts\activate       # Windows
 
 pip install -r requirements.txt
-3. Configurer l’environnement
+### 3. Configurer l’environnement
 Copier le fichier .env.example → .env et remplir :
 
 env
@@ -50,17 +50,17 @@ Copier le code
 TMDB_API_KEY=ta_clef_tmdb
 DB_URL=mysql+mysqlconnector://user:password@localhost/movies
 ALLOW_ORIGINS=http://localhost:5173
-4. Initialiser la base de données
+### 4. Initialiser la base de données
 bash
 Copier le code
 alembic upgrade head
-5. Lancer l’API
+### 5. Lancer l’API
 bash
 Copier le code
 uvicorn src.api.app:app --reload
 → API disponible sur http://localhost:8000
 
-6. Lancer le frontend
+### 6. Lancer le frontend
 bash
 Copier le code
 cd web
@@ -88,7 +88,7 @@ POST /admin/refresh_cache → reconstruit l’index k-NN
 
 POST /admin/ingest_movie/{tmdb_id} → insère un film en base
 
-📦 Déploiement
+### 📦 Déploiement
 Base SQL : Railway, Render ou Supabase
 
 Backend : Docker + Uvicorn/Gunicorn sur Railway/Render/Heroku
@@ -97,7 +97,7 @@ Frontend : Vercel ou Netlify
 
 CI/CD : GitHub Actions (tests, lint, migrations)
 
-📈 Roadmap
+### 📈 Roadmap
  Améliorer l’UI (sélection de films, cartes avec affiches, explications)
 
  Gestion utilisateurs (profils, historique)
@@ -108,7 +108,7 @@ CI/CD : GitHub Actions (tests, lint, migrations)
 
  Déploiement full cloud (DB + API + Front)
 
-🤝 Contribution
+### 🤝 Contribution
 Fork le projet
 
 Crée une branche feature : git checkout -b feat/ma-fonctionnalite
@@ -119,15 +119,15 @@ Push : git push origin feat/ma-fonctionnalite
 
 Ouvre une Pull Request
 
-📜 Licence
+### 📜 Licence
 Ce projet est sous licence Apache 2.0.
 
-🙏 Remerciements
+### 🙏 Remerciements
 TMDb pour leur API
 
 L’écosystème open-source Python & React
 
-🏗️ Architecture
+### 🏗️ Architecture
 bash
 Copier le code
 .
