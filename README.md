@@ -1,74 +1,150 @@
-# Cinema_Algorithm
-Ce projet est une application web de recommandation de films basée sur les préférences des utilisateurs. L’objectif est de proposer des suggestions personnalisées en combinant différents critères comme les réalisateurs, les acteurs principaux et les genres.
+# 🎬 Cinema Algorithm
 
+**Cinema Algorithm** est un moteur de recommandation de films basé sur le contenu.  
+Il combine les données de **The Movie Database (TMDb)** avec un pipeline d’ingestion, un backend **FastAPI** et un client **React** pour offrir une expérience complète : recherche de films, sélection de favoris et recommandations personnalisées.
 
+---
 
+## 🚀 Fonctionnalités
 
-🚀 Grandes étapes pour ton projet
-1.Définition des fonctionnalités:
-Entrée : l’utilisateur entre une liste de films qu’il aime (1<= nb_films <=5).
-Sortie : une liste de films recommandés avec un poid décidable par l'utilisateur en fonction de ses préférences perso (ex. "Même réalisateur", "Acteur en commun", "Genre similaire").
-Je veux faire un prototype académique mais qui deviendra potentiellement plus tard un site publiquement accessible.
-Algorithme de recommandation basé sur le principe des k-Nearest Neighbors (k-NN). 
+- **Recherche de films** via l’API TMDb  
+- **Sélection de films de référence** par l’utilisateur (1 à 5 films)  
+- **Recommandations personnalisées** (k-Nearest Neighbors sur genres, acteurs, réalisateurs)  
+- **Explication des recommandations** (partage de réalisateur, acteurs, genres)  
+- **Backend REST** (FastAPI)  
+- **Frontend React** simple et extensible  
+- **Base SQL** avec migrations Alembic pour la persistance  
+- **Cache/rafraîchissement** des recommandations pour de meilleures performances  
 
+---
 
-2. Base de données :
-The Movie Database (TMDb)
- (API gratuite et complète).
+## 🛠️ Stack technique
 
-Contenu à stocker :
+- **Backend** : [FastAPI](https://fastapi.tiangolo.com/), [SQLAlchemy](https://www.sqlalchemy.org/), [Alembic](https://alembic.sqlalchemy.org/), [scikit-learn](https://scikit-learn.org/)  
+- **Base de données** : MySQL (ou PostgreSQL compatible)  
+- **Data source** : [TMDb API](https://developer.themoviedb.org/)  
+- **Frontend** : [React](https://react.dev/) + Fetch API  
+- **Déploiement** : Uvicorn, Docker (optionnel), Railway/Render pour la base/API, Vercel/Netlify pour le front  
 
-Film(id, titre, année, réalisateur_id)
-Réalisateur(id, nom)
-Acteur(id, nom)
-Genre(id, nom)
-Année(id, nombre/décennie)
-Tables de jointure (film-acteur, film-genre).  
+---
 
-je vais utiliser MySQL (relationnel, bon pour ce type de données).
+## ⚙️ Installation & setup
 
+### 1. Cloner le repo
+```bash
+git clone https://github.com/EliotGoarin/Cinema_Algorithm.git
+cd Cinema_Algorithm
+2. Créer un environnement virtuel et installer les dépendances
+bash
+Copier le code
+python -m venv .venv
+source .venv/bin/activate    # Linux/Mac
+.venv\Scripts\activate       # Windows
 
-3. Développer le moteur de recommandation
-Version avancée (machine learning) :
-Représenter chaque film par un vecteur (réalisateur, acteurs, genres encodés).
-Utiliser des mesures de similarité (cosinus, Jaccard).
-Algorithmes de recommandation (k-NN, filtrage basé sur le contenu).
+pip install -r requirements.txt
+3. Configurer l’environnement
+Copier le fichier .env.example → .env et remplir :
 
-👉 Moyens : Python pour prototyper (bibliothèques : pandas, scikit-learn).
-Plus tard : implémenter l’algorithme côté serveur (Flask, FastAPI, Django).
+env
+Copier le code
+TMDB_API_KEY=ta_clef_tmdb
+DB_URL=mysql+mysqlconnector://user:password@localhost/movies
+ALLOW_ORIGINS=http://localhost:5173
+4. Initialiser la base de données
+bash
+Copier le code
+alembic upgrade head
+5. Lancer l’API
+bash
+Copier le code
+uvicorn src.api.app:app --reload
+→ API disponible sur http://localhost:8000
 
+6. Lancer le frontend
+bash
+Copier le code
+cd web
+npm install
+npm run dev
+→ Frontend dispo sur http://localhost:5173
 
+🔌 Endpoints principaux
+GET /healthz → ping de santé
 
-4. Créer le backend (API)
-Sert à exposer :
-/recommandations?films=[id1,id2,id3] → renvoie une liste JSON de films.
-Technos adaptées :
-Python + Flask ou FastAPI (rapide pour étudiants).
-Node.js (si tu préfères JavaScript).
-👉 Moyens : Ton backend interroge la base SQL et applique l’algorithme de recommandation.
+GET /tmdb/search?query=Inception → recherche TMDb
 
+POST /recommend
+Exemple payload :
 
-5. Développer le frontend
-Fonctions principales :
-Recherche de films (autocomplétion).
-Sélection de films préférés (liste).
-Affichage des recommandations (cartes avec affiche, titre, raison de la recommandation).
-Technos possibles :
-HTML/CSS/JS (si tu veux rester simple).
-React, Vue, ou Angular (si tu veux un site moderne et dynamique).
-Framework CSS (Bootstrap, Tailwind) pour gagner du temps.
-👉 Moyens : Récupération des affiches depuis l’API TMDb pour un rendu visuel sympa.
+json
+Copier le code
+{
+  "seed_ids": [27205, 157336],
+  "k": 10
+}
+→ renvoie les 10 films les plus proches
 
+POST /admin/refresh_cache → reconstruit l’index k-NN
 
-6. Hébergement et déploiement
-Base de données : hébergement sur PostgreSQL (Railway, Render, Supabase…).
-Backend : déploiement sur Heroku, Render, ou Railway.
-Frontend : Netlify, Vercel (très simples pour héberger du React/Vue).
-👉 Moyens : Commence en local → déploie ensuite.
+POST /admin/ingest_movie/{tmdb_id} → insère un film en base
 
+📦 Déploiement
+Base SQL : Railway, Render ou Supabase
 
-7. Améliorations possibles
-Personnalisation en continu (l’utilisateur met des notes).
-Filtrage collaboratif (si tu as plusieurs utilisateurs).
-Explications textuelles des recommandations ("Parce que vous aimez Nolan et DiCaprio…").
-Performance (indexation, cache).
+Backend : Docker + Uvicorn/Gunicorn sur Railway/Render/Heroku
+
+Frontend : Vercel ou Netlify
+
+CI/CD : GitHub Actions (tests, lint, migrations)
+
+📈 Roadmap
+ Améliorer l’UI (sélection de films, cartes avec affiches, explications)
+
+ Gestion utilisateurs (profils, historique)
+
+ Pondération dynamique (curseurs acteurs/réalisateurs/genres)
+
+ Tests unitaires & intégration continue
+
+ Déploiement full cloud (DB + API + Front)
+
+🤝 Contribution
+Fork le projet
+
+Crée une branche feature : git checkout -b feat/ma-fonctionnalite
+
+Commit tes modifs : git commit -m "feat: ajout X"
+
+Push : git push origin feat/ma-fonctionnalite
+
+Ouvre une Pull Request
+
+📜 Licence
+Ce projet est sous licence Apache 2.0.
+
+🙏 Remerciements
+TMDb pour leur API
+
+L’écosystème open-source Python & React
+
+🏗️ Architecture
+bash
+Copier le code
+.
+├── src/                  # Code backend Python
+│   ├── api/              # API FastAPI (routes, CORS, endpoints)
+│   ├── core/             # Clients et outils (TMDb, config, etc.)
+│   ├── ingest/           # Scripts d’ingestion TMDb → base SQL
+│   └── ml/               # Moteur de recommandation (k-NN, cache)
+│
+├── web/                  # Client React (interface utilisateur)
+│   ├── src/App.jsx
+│   └── src/apiClient.js
+│
+├── migrations/           # Scripts Alembic (schéma SQL)
+├── alembic.ini           # Config migrations
+├── pyproject.toml        # Packaging & dépendances
+├── requirements.txt      # Dépendances (pip)
+├── env.example           # Variables d’environnement
+├── .gitignore            # Ignore standard (Python, venv, node_modules, etc.)
+└── README.md             # Documentation
