@@ -1,367 +1,308 @@
-import { useState } from "react";
-import {
-  searchMovies,
-  ingestAndAdd,
-  getRecommendations,
-  refreshCache,
-} from "./apiClient";
+// web/src/App.jsx
+import React, { useState } from "react";
+import MovieCard from "./components/MovieCard";
 
-// Utilitaire pour normaliser les posters (API peut renvoyer URL complète ou juste le path)
-const posterUrl = (p) => {
-  if (!p) return null;
-  return typeof p === "string" && p.startsWith("http")
-    ? p
-    : `https://image.tmdb.org/t/p/w200${p}`;
-};
+// Base URL de l'API (configurable via Vite : VITE_API_BASE)
+const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
+
+// Petit helper pour bâtir l'URL d'affiche TMDb au besoin
+const TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w342";
+const posterUrl = (path) =>
+  path ? (path.startsWith("http") ? path : `${TMDB_POSTER_BASE}${path}`) : "";
+
+// Normalise un film TMDb (search) en { tmdb_id, title, poster_path }
+function normalizeTmdbMovie(m) {
+  return {
+    tmdb_id: m.tmdb_id ?? m.id,
+    title: m.title ?? m.original_title ?? "(sans titre)",
+    poster_path: m.poster_path ?? null,
+  };
+}
 
 export default function App() {
-  // Recherche
   const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
-  const [results, setResults] = useState([]);
 
-  // Seeds (films choisis par l'utilisateur)
-  const [seeds, setSeeds] = useState([]); // [{ id, title }]
-  const [k, setK] = useState(10);
-
-  // Recommandations
-  const [recoLoading, setRecoLoading] = useState(false);
-  const [recoError, setRecoError] = useState("");
+  const [seeds, setSeeds] = useState([]); // [{tmdb_id,title,poster_path}]
   const [recommendations, setRecommendations] = useState([]);
+  const [recLoading, setRecLoading] = useState(false);
+  const [recError, setRecError] = useState("");
 
-  // Actions
-  const onSearch = async (e) => {
+  // --- Actions ---
+
+  async function handleSearch(e) {
     e?.preventDefault?.();
     setSearchError("");
     setSearchLoading(true);
+    setSearchResults([]);
     try {
-      if (!query.trim()) {
-        setResults([]);
-        return;
-      }
-      const data = await searchMovies(query.trim());
-      setResults(Array.isArray(data?.results) ? data.results : []);
+      const res = await fetch(`${API_BASE}/tmdb/search?q=${encodeURIComponent(query)}&page=1`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      const results = (json.results || []).map(normalizeTmdbMovie);
+      setSearchResults(results);
     } catch (err) {
       console.error(err);
-      setSearchError("Erreur lors de la recherche TMDb.");
+      setSearchError("Recherche impossible. Vérifie l'API et la clé TMDb.");
     } finally {
       setSearchLoading(false);
     }
-  };
+  }
 
-  const onIngest = async (title) => {
+  function addSeed(m) {
+    if (!m?.tmdb_id) return;
+    if (seeds.find((s) => s.tmdb_id === m.tmdb_id)) return;
+    if (seeds.length >= 5) return;
+    setSeeds((prev) => [...prev, m]);
+  }
+
+  function removeSeed(id) {
+    setSeeds((prev) => prev.filter((s) => s.tmdb_id !== id));
+  }
+
+  async function handleRecommend() {
+    setRecError("");
+    setRecLoading(true);
+    setRecommendations([]);
     try {
-      const data = await ingestAndAdd(title);
-      // On alerte succès (pour remplacer l'ancienne pop-up d'erreur)
-      alert(`Film ingéré: ${data.movie.title} (id: ${data.movie.id})`);
+      const body = { seed_ids: seeds.map((s) => s.tmdb_id), k: 12 };
+      const res = await fetch(`${API_BASE}/recommend`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+      const json = await res.json();
+      // On s'attend à { results: [...] } avec reason + overview dans chaque item
+      setRecommendations(json.results || []);
     } catch (err) {
       console.error(err);
-      alert("Erreur ingestion");
-    }
-  };
-
-  const addSeed = (movie) => {
-    if (!movie || !movie.id) return;
-    setSeeds((prev) => {
-      if (prev.some((m) => m.id === movie.id)) return prev;
-      return [...prev, { id: movie.id, title: movie.title ?? "(sans titre)" }];
-    });
-  };
-
-  const removeSeed = (id) => {
-    setSeeds((prev) => prev.filter((m) => m.id !== id));
-  };
-
-  const onRecommend = async () => {
-    setRecoError("");
-    setRecoLoading(true);
-    try {
-      if (seeds.length === 0) {
-        setRecommendations([]);
-        return;
-      }
-      const ids = seeds.map((s) => s.id);
-      const data = await getRecommendations(ids, Number(k) || 10);
-      const recs = Array.isArray(data?.recommendations) ? data.recommendations : [];
-      setRecommendations(recs);
-      // Sanity check: ne pas contenir les seeds
-      const seedSet = new Set(ids);
-      const overlaps = recs.filter((r) => seedSet.has(r.tmdb_id));
-      if (overlaps.length > 0) {
-        console.warn("Ces résultats contiennent au moins un seed (ne devrait pas arriver):", overlaps);
-      }
-    } catch (err) {
-      console.error(err);
-      setRecoError("Erreur lors de la récupération des recommandations.");
+      setRecError("Recommandation impossible. Assure-toi d'avoir ingéré des films et rafraîchi l'index.");
     } finally {
-      setRecoLoading(false);
+      setRecLoading(false);
     }
-  };
+  }
 
-  const onRefreshCache = async () => {
-    try {
-      await refreshCache();
-      alert("Cache du modèle reconstruit.");
-    } catch (err) {
-      console.error(err);
-      alert("Erreur lors du refresh du cache.");
-    }
-  };
+  // --- UI ---
 
   return (
     <div style={styles.page}>
-      <header style={styles.header}>
-        <h1 style={{ margin: 0 }}>🎬 Movie Recommender (dev)</h1>
-        <div style={styles.headerActions}>
-          <button onClick={onRefreshCache} style={styles.buttonSecondary}>
-            Rafraîchir cache modèle
-          </button>
-        </div>
-      </header>
+      <h1 style={{ margin: 0 }}>🎬 Cinema Recommender</h1>
+      <p style={{ marginTop: 8, color: "#666" }}>
+        Cherche un film, ajoute-en jusqu'à 5 comme références, puis clique sur <strong>Recommander</strong>.
+        Passe la souris sur chaque affiche recommandée pour voir <em>pourquoi</em> (reason) et la <em>description</em> (overview).
+      </p>
 
-      {/* Bloc Recherche */}
-      <section style={styles.section}>
-        <h2 style={styles.h2}>Recherche TMDb</h2>
-        <form onSubmit={onSearch} style={styles.formRow}>
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Titre du film (ex: Matrix)"
-            style={styles.input}
-          />
-          <button type="submit" disabled={searchLoading} style={styles.button}>
-            {searchLoading ? "Recherche..." : "Rechercher"}
-          </button>
-          <button
-            type="button"
-            onClick={() => onIngest(query.trim())}
-            disabled={!query.trim()}
-            style={styles.buttonSecondary}
-            title="Ingestion rapide : ingère le premier résultat TMDb pour cette requête"
-          >
-            Ingérer (par recherche)
-          </button>
-        </form>
-        {searchError && <p style={styles.error}>{searchError}</p>}
+      {/* Barre de recherche */}
+      <form onSubmit={handleSearch} style={styles.searchRow}>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Ex: Matrix"
+          style={styles.input}
+        />
+        <button type="submit" style={styles.button} disabled={searchLoading || !query.trim()}>
+          {searchLoading ? "Recherche..." : "Rechercher"}
+        </button>
+      </form>
 
-        {results.length > 0 && (
+      {/* Résultats de recherche */}
+      {searchError && <div style={styles.error}>{searchError}</div>}
+      {searchResults.length > 0 && (
+        <>
+          <h2 style={styles.h2}>Résultats</h2>
           <div style={styles.grid}>
-            {results.map((m) => {
-              const img = posterUrl(m.poster_path);
-              const year = (m.release_date || "").slice(0, 4);
-              return (
-                <div key={m.id} style={styles.card}>
-                  {img ? (
-                    <img src={img} alt={m.title} style={styles.poster} />
-                  ) : (
-                    <div style={styles.posterPlaceholder}>No image</div>
-                  )}
-                  <div style={styles.cardBody}>
-                    <div style={styles.titleLine}>
-                      <strong>{m.title || "(sans titre)"}</strong>
-                      {year ? <span style={styles.year}> {year}</span> : null}
-                    </div>
-                    <div style={styles.rowBtns}>
-                      <button onClick={() => addSeed(m)} style={styles.buttonSmall}>
-                        Sélectionner
-                      </button>
-                      <button onClick={() => onIngest(m.title || "")} style={styles.buttonSmallGhost}>
-                        Ingérer ce film
-                      </button>
-                    </div>
+            {searchResults.map((m) => (
+              <div key={m.tmdb_id} style={styles.card}>
+                {posterUrl(m.poster_path) ? (
+                  <img src={posterUrl(m.poster_path)} alt={m.title} style={styles.poster} />
+                ) : (
+                  <div style={styles.posterPlaceholder}>No image</div>
+                )}
+                <div style={styles.cardBody}>
+                  <div style={styles.titleLine} title={m.title}>
+                    {m.title}
                   </div>
+                  <button
+                    style={styles.smallBtn}
+                    onClick={() => addSeed(m)}
+                    disabled={!!seeds.find((s) => s.tmdb_id === m.tmdb_id) || seeds.length >= 5}
+                  >
+                    + Ajouter
+                  </button>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* Bloc Seeds */}
-      <section style={styles.section}>
-        <h2 style={styles.h2}>Films sélectionnés (seeds)</h2>
-        {seeds.length === 0 ? (
-          <p style={styles.muted}>Aucun seed sélectionné.</p>
-        ) : (
-          <ul style={styles.seedList}>
-            {seeds.map((s) => (
-              <li key={s.id} style={styles.seedItem}>
-                <span>{s.title}</span>
-                <button onClick={() => removeSeed(s.id)} style={styles.removeBtn}>
-                  Retirer
-                </button>
-              </li>
+              </div>
             ))}
-          </ul>
-        )}
-        <div style={styles.formRow}>
-          <label>
-            k&nbsp;
-            <input
-              type="number"
-              min={1}
-              max={50}
-              value={k}
-              onChange={(e) => setK(e.target.value)}
-              style={styles.kInput}
-            />
-          </label>
-          <button onClick={onRecommend} disabled={recoLoading || seeds.length === 0} style={styles.button}>
-            {recoLoading ? "Calcul..." : "Recommander"}
-          </button>
-        </div>
-        {recoError && <p style={styles.error}>{recoError}</p>}
-      </section>
-
-      {/* Bloc Recommandations */}
-      <section style={styles.section}>
-        <h2 style={styles.h2}>Recommandations</h2>
-        {recommendations.length === 0 ? (
-          <p style={styles.muted}>Aucune recommandation à afficher.</p>
-        ) : (
-          <div style={styles.grid}>
-            {recommendations.map((r) => {
-              const img = posterUrl(r.poster_path);
-              return (
-                <div key={r.tmdb_id || r.id} style={styles.card}>
-                  {img ? (
-                    <img src={img} alt={r.title || r.tmdb_id} style={styles.poster} />
-                  ) : (
-                    <div style={styles.posterPlaceholder}>No image</div>
-                  )}
-                  <div style={styles.cardBody}>
-                    <strong>{r.title || `(id: ${r.tmdb_id || r.id})`}</strong>
-                  </div>
-                </div>
-              );
-            })}
           </div>
-        )}
-      </section>
+        </>
+      )}
+
+      {/* Seeds sélectionnés */}
+      <h2 style={styles.h2}>
+        Vos films de référence {seeds.length > 0 ? `(${seeds.length}/5)` : ""}
+      </h2>
+      {seeds.length === 0 ? (
+        <div style={{ color: "#777", marginBottom: 12 }}>Ajoute au moins un film.</div>
+      ) : (
+        <div style={styles.seedsRow}>
+          {seeds.map((s) => (
+            <div key={s.tmdb_id} style={styles.seedChip}>
+              {posterUrl(s.poster_path) ? (
+                <img src={posterUrl(s.poster_path)} alt={s.title} style={styles.seedPoster} />
+              ) : (
+                <div style={styles.seedPosterFallback}>?</div>
+              )}
+              <span style={{ marginLeft: 8, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.title}>
+                {s.title}
+              </span>
+              <button onClick={() => removeSeed(s.tmdb_id)} style={styles.chipX}>
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Action recommander */}
+      <div style={{ marginTop: 8, marginBottom: 24 }}>
+        <button
+          style={styles.primaryBtn}
+          onClick={handleRecommend}
+          disabled={recLoading || seeds.length === 0}
+        >
+          {recLoading ? "Calcul..." : "Recommander"}
+        </button>
+      </div>
+
+      {/* Recommandations */}
+      {recError && <div style={styles.error}>{recError}</div>}
+      <h2 style={styles.h2}>Recommandations</h2>
+      {recommendations.length === 0 ? (
+        <div style={{ color: "#777" }}>Aucune recommandation pour le moment.</div>
+      ) : (
+        <div style={styles.grid}>
+          {recommendations.map((r) => (
+            <MovieCard key={r.tmdb_id || r.id} movie={r} />
+          ))}
+        </div>
+      )}
 
       <footer style={styles.footer}>
-        <small>API base: {import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000"}</small>
+        <small>
+          API&nbsp;: <code>{API_BASE}</code>
+        </small>
       </footer>
     </div>
   );
 }
 
-// Styles inline simples (tu pourras passer à Tailwind ensuite)
+// --- Styles inline simples (tu peux migrer en CSS/Tailwind) ---
 const styles = {
-  page: {
-    fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
-    padding: "16px",
-    background: "#0b0e14",
-    color: "#e6e6e6",
-    minHeight: "100vh",
-  },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: "12px",
-  },
-  headerActions: { display: "flex", gap: 8 },
-  section: { marginTop: 24 },
-  h2: { margin: "8px 0 12px 0" },
-  formRow: { display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" },
+  page: { padding: 24, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" },
+  searchRow: { display: "flex", gap: 8, alignItems: "center", marginTop: 12 },
   input: {
-    padding: "8px 10px",
-    borderRadius: 8,
-    border: "1px solid #333",
-    background: "#121826",
-    color: "#e6e6e6",
-    minWidth: 280,
-  },
-  kInput: {
-    padding: "6px 8px",
-    borderRadius: 8,
-    border: "1px solid #333",
-    background: "#121826",
-    color: "#e6e6e6",
-    width: 64,
+    flex: 1,
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #ddd",
+    fontSize: 16,
   },
   button: {
-    padding: "8px 12px",
+    padding: "10px 14px",
     borderRadius: 10,
-    border: "1px solid #2f6feb",
-    background: "#2f6feb",
-    color: "white",
+    border: "1px solid #ddd",
+    background: "#f5f5f5",
     cursor: "pointer",
   },
-  buttonSecondary: {
-    padding: "8px 12px",
-    borderRadius: 10,
-    border: "1px solid #3b3b3b",
-    background: "#1c2231",
-    color: "#e6e6e6",
+  primaryBtn: {
+    padding: "12px 16px",
+    borderRadius: 12,
+    border: "none",
+    background: "#111827",
+    color: "#fff",
     cursor: "pointer",
+    fontWeight: 600,
   },
-  buttonSmall: {
-    padding: "6px 8px",
+  smallBtn: {
+    padding: "6px 10px",
     borderRadius: 8,
-    border: "1px solid #2f6feb",
-    background: "#2f6feb",
-    color: "white",
+    border: "1px solid #ddd",
+    background: "#fff",
     cursor: "pointer",
-    fontSize: 12,
+    fontSize: 13,
   },
-  buttonSmallGhost: {
-    padding: "6px 8px",
-    borderRadius: 8,
-    border: "1px solid #3b3b3b",
-    background: "transparent",
-    color: "#e6e6e6",
-    cursor: "pointer",
-    fontSize: 12,
-  },
+  h2: { marginTop: 24, marginBottom: 12 },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-    gap: 12,
+    gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+    gap: 16,
   },
   card: {
-    background: "#111827",
-    border: "1px solid #1f2937",
+    border: "1px solid #eee",
     borderRadius: 12,
-    overflow: "hidden",
-    display: "flex",
-    flexDirection: "column",
+    padding: 10,
+    background: "#fff",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
   },
-  poster: { width: "100%", height: 270, objectFit: "cover", background: "#0f172a" },
+  poster: { width: "100%", height: "auto", borderRadius: 10, display: "block" },
   posterPlaceholder: {
     width: "100%",
-    height: 270,
+    aspectRatio: "2/3",
+    borderRadius: 10,
+    background: "#f0f0f0",
+    color: "#999",
     display: "grid",
     placeItems: "center",
-    background: "#0f172a",
-    color: "#94a3b8",
-    fontSize: 12,
   },
-  cardBody: { padding: 10, display: "grid", gap: 8 },
-  titleLine: { display: "flex", gap: 6, alignItems: "baseline", flexWrap: "wrap" },
-  year: { color: "#9ca3af", fontSize: 13 },
-  rowBtns: { display: "flex", gap: 8 },
-  seedList: { listStyle: "none", padding: 0, margin: "6px 0 12px 0", display: "flex", gap: 8, flexWrap: "wrap" },
-  seedItem: {
-    display: "flex",
-    gap: 8,
+  cardBody: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 8 },
+  titleLine: {
+    fontWeight: 600,
+    fontSize: 14,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    flex: 1,
+  },
+  seedsRow: { display: "flex", flexWrap: "wrap", gap: 8 },
+  seedChip: {
+    display: "inline-flex",
     alignItems: "center",
-    background: "#111827",
-    border: "1px solid #1f2937",
     borderRadius: 999,
-    padding: "6px 10px",
+    background: "#f5f5f5",
+    padding: "4px 8px 4px 4px",
   },
-  removeBtn: {
+  seedPoster: { width: 28, height: 42, objectFit: "cover", borderRadius: 6 },
+  seedPosterFallback: {
+    width: 28,
+    height: 42,
+    borderRadius: 6,
+    background: "#e5e5e5",
+    display: "grid",
+    placeItems: "center",
+    color: "#888",
+    fontWeight: 700,
+  },
+  chipX: {
+    marginLeft: 8,
     border: "none",
     background: "transparent",
-    color: "#f87171",
+    fontSize: 14,
     cursor: "pointer",
-    fontSize: 12,
+    color: "#666",
   },
-  muted: { color: "#9ca3af" },
-  error: { color: "#f87171" },
-  footer: { marginTop: 32, color: "#9ca3af" },
+  error: {
+    marginTop: 10,
+    marginBottom: 8,
+    padding: "10px 12px",
+    borderRadius: 10,
+    background: "#fee2e2",
+    color: "#991b1b",
+    border: "1px solid #fecaca",
+  },
+  footer: { marginTop: 40, color: "#888" },
 };

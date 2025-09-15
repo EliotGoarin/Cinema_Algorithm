@@ -25,3 +25,23 @@ def refresh_cache() -> Dict[str, Any]:
         return {"indexed": n}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def debug_stats() -> dict:
+    _ensure_cache()
+    rows = _cache["rows"]
+    X = _cache["X"]
+
+    has_genre = sum(1 for r in rows if r.genres)
+    has_dir   = sum(1 for r in rows if r.directors)
+    has_act   = sum(1 for r in rows if r.actors)
+
+    return {
+        "num_films": len(rows),
+        "matrix_shape": [int(X.shape[0]), int(X.shape[1])],
+        "nonzero": int(X.nnz),
+        "films_with_genre": has_genre,
+        "films_with_director": has_dir,
+        "films_with_actor": has_act,
+        "sample_row": rows[0].__dict__ if rows else None,
+    }

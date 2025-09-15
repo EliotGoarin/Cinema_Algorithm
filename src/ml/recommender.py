@@ -1,24 +1,22 @@
-# src/ml/recommender.py
+from __future__ import annotations
+
 import os
-import pandas as pd
-from typing import List, Dict, Any, Tuple
 from dataclasses import dataclass
-from sklearn.neighbors import NearestNeighbors
+from typing import Any, Dict, List, Tuple
+
+import pandas as pd
 from scipy import sparse
-from sqlalchemy import create_engine, text
+from sklearn.neighbors import NearestNeighbors
+from sqlalchemy import create_engine, inspect, text
 
 # ----- CONFIG -----
-DB_URL = os.getenv("DB_URL", "mysql+mysqlconnector://root:password@localhost/movies")
-FEATURE_WEIGHTS = {
-    "genres": 1.0,
-    "directors": 1.3,
-    "actors": 1.1,
-}
-TOP_ACTORS_PER_FILM = 5  # limite acteurs par film pour éviter des vecteurs énormes
+DB_URL = os.getenv("DB_URL", "mysql+mysqlconnector://root:password@127.0.0.1:3306/movies")
+FEATURE_WEIGHTS = {"genres": 1.0, "directors": 1.3, "actors": 1.1}
+TOP_ACTORS_PER_FILM = 5
 KNN_METRIC = "cosine"
 
 _engine = None
-_cache = None  # type: Dict[str, Any]
+_cache: Dict[str, Any] | None = None
 
 
 @dataclass
@@ -27,7 +25,6 @@ class FilmRow:
     title: str
     poster_path: str | None
     overview: str | None
-    # sets
     directors: set
     actors: set
     genres: set
@@ -40,82 +37,123 @@ def _engine_once():
     return _engine
 
 
-def _try_read_sql_candidates(sqls: List[str]) -> pd.DataFrame:
-    """Essaie plusieurs variantes de requêtes/tables (selon que tu utilises 'actor' ou 'actors', etc.)."""
-    eng = _engine_once()
-    last_err = None
-    for s in sqls:
-        try:
-            return pd.read_sql(text(s), eng)
-        except Exception as e:
-            last_err = e
-    raise last_err if last_err else RuntimeError("No SQL worked.")
+# ---------- Helpers introspection ----------
+def _inspector():
+    return inspect(_engine_once())
 
 
+def _table_exists(name: str) -> bool:
+    try:
+        return _inspector().has_table(name)
+    except Exception:
+        return False
+
+
+def _has_cols(table: str, cols: list[str]) -> bool:
+    try:
+        names = {c["name"] for c in _inspector().get_columns(table)}
+        return all(c in names for c in cols)
+    except Exception:
+        return False
+
+
+def _read_sql_safe(sql: str) -> pd.DataFrame:
+    try:
+        return pd.read_sql(text(sql), _engine_once())
+    except Exception:
+        return pd.DataFrame()
+
+
+# ---------- Chargement catalogue ----------
 def _load_films_people_genres() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Charge films, acteurs, réalisateurs, genres depuis la DB (tolérant sur les noms de tables)."""
-    films = _try_read_sql_candidates([
-        """
+    """Retourne (films, directors, actors, genres) avec détection automatique des tables/colonnes disponibles."""
+    # FILMS (obligatoire)
+    films = _read_sql_safe("""
         SELECT f.tmdb_id, f.title, f.poster_path, f.overview
         FROM film f
-        """,
-    ])
-    # Réalisateurs
-    directors = _try_read_sql_candidates([
-        # variante 1: table 'directors' (film_tmdb_id, name)
-        """
-        SELECT d.film_tmdb_id AS film_tmdb_id, d.name AS director
-        FROM directors d
-        """,
-        # variante 2: table 'director' (film_tmdb_id, name)
-        """
-        SELECT d.film_tmdb_id AS film_tmdb_id, d.name AS director
-        FROM director d
-        """,
-        # variante 3: table 'person' + role
-        """
-        SELECT fp.film_tmdb_id AS film_tmdb_id, p.name AS director
-        FROM film_person fp
-        JOIN person p ON p.tmdb_id = fp.person_tmdb_id
-        WHERE fp.role = 'director'
-        """,
-    ])
+    """)
+    if films.empty:
+        raise RuntimeError("Table 'film' introuvable ou vide : impossible de construire le catalogue.")
 
-    # Acteurs
-    actors = _try_read_sql_candidates([
-        # variante 1: table 'actors' (film_tmdb_id, name, cast_order)
-        """
-        SELECT a.film_tmdb_id AS film_tmdb_id, a.name AS actor, a.cast_order
-        FROM actors a
-        """,
-        # variante 2: table 'actor' (film_tmdb_id, name)
-        """
-        SELECT a.film_tmdb_id AS film_tmdb_id, a.name AS actor, NULL as cast_order
-        FROM actor a
-        """,
-        # variante 3: table 'film_person' + role
-        """
-        SELECT fp.film_tmdb_id AS film_tmdb_id, p.name AS actor, fp.cast_order
-        FROM film_person fp
-        JOIN person p ON p.tmdb_id = fp.person_tmdb_id
-        WHERE fp.role = 'actor'
-        """,
-    ])
+    # DIRECTORS
+    directors = pd.DataFrame(columns=["film_tmdb_id", "director"])
+    if _table_exists("directors") and _has_cols("directors", ["film_tmdb_id", "name"]):
+        directors = _read_sql_safe("""
+            SELECT d.film_tmdb_id AS film_tmdb_id, d.name AS director
+            FROM directors d
+        """)
+    elif _table_exists("director") and _has_cols("director", ["film_tmdb_id", "name"]):
+        directors = _read_sql_safe("""
+            SELECT d.film_tmdb_id AS film_tmdb_id, d.name AS director
+            FROM director d
+        """)
+    elif _table_exists("film_person") and _table_exists("person") and _has_cols("film_person", ["film_tmdb_id","person_tmdb_id","role"]):
+        directors = _read_sql_safe("""
+            SELECT fp.film_tmdb_id AS film_tmdb_id, p.name AS director
+            FROM film_person fp
+            JOIN person p ON p.tmdb_id = fp.person_tmdb_id
+            WHERE fp.role = 'director'
+        """)
 
-    # Genres
-    genres = _try_read_sql_candidates([
-        # film_genre + genre(name)
-        """
-        SELECT fg.film_tmdb_id, g.name AS genre
-        FROM film_genre fg
-        JOIN genre g ON g.id = fg.genre_id
-        """,
-        # film_genres avec nom déjà présent
-        """
-        SELECT fg.film_tmdb_id, fg.name AS genre
-        FROM film_genres fg
-        """,
-    ])
+    # ACTORS
+    actors = pd.DataFrame(columns=["film_tmdb_id", "actor", "cast_order"])
+    if _table_exists("actors") and _has_cols("actors", ["film_tmdb_id", "name"]):
+        if _has_cols("actors", ["cast_order"]):
+            actors = _read_sql_safe("""
+                SELECT a.film_tmdb_id AS film_tmdb_id, a.name AS actor, a.cast_order
+                FROM actors a
+            """)
+        else:
+            tmp = _read_sql_safe("""
+                SELECT a.film_tmdb_id AS film_tmdb_id, a.name AS actor
+                FROM actors a
+            """)
+            if not tmp.empty:
+                tmp["cast_order"] = None
+                actors = tmp
+    elif _table_exists("actor") and _has_cols("actor", ["film_tmdb_id", "name"]):
+        tmp = _read_sql_safe("""
+            SELECT a.film_tmdb_id AS film_tmdb_id, a.name AS actor
+            FROM actor a
+        """)
+        if not tmp.empty:
+            tmp["cast_order"] = None
+            actors = tmp
+    elif _table_exists("film_person") and _table_exists("person") and _has_cols("film_person", ["film_tmdb_id","person_tmdb_id","role"]):
+        actors = _read_sql_safe("""
+            SELECT fp.film_tmdb_id AS film_tmdb_id, p.name AS actor, fp.cast_order
+            FROM film_person fp
+            JOIN person p ON p.tmdb_id = fp.person_tmdb_id
+            WHERE fp.role = 'actor'
+        """)
+
+    # GENRES
+    genres = pd.DataFrame(columns=["film_tmdb_id", "genre"])
+    if _table_exists("film_genre") and _table_exists("genre") and _has_cols("film_genre", ["film_tmdb_id","genre_id"]):
+        genres = _read_sql_safe("""
+            SELECT fg.film_tmdb_id, g.name AS genre
+            FROM film_genre fg
+            JOIN genre g ON g.id = fg.genre_id
+        """)
+    elif _table_exists("film_genres") and _has_cols("film_genres", ["film_tmdb_id","name"]):
+        genres = _read_sql_safe("""
+            SELECT fg.film_tmdb_id, fg.name AS genre
+            FROM film_genres fg
+        """)
+    elif _table_exists("film") and _has_cols("film", ["tmdb_id","genres"]):
+        tmp = _read_sql_safe("""
+            SELECT tmdb_id AS film_tmdb_id, genres
+            FROM film
+            WHERE genres IS NOT NULL AND genres <> ''
+        """)
+        if not tmp.empty:
+            rows = []
+            for _, r in tmp.iterrows():
+                for g in str(r["genres"]).split(","):
+                    g = g.strip()
+                    if g:
+                        rows.append({"film_tmdb_id": int(r["film_tmdb_id"]), "genre": g})
+            genres = pd.DataFrame(rows) if rows else genres
 
     return films, directors, actors, genres
 
@@ -123,20 +161,34 @@ def _load_films_people_genres() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFram
 def _prepare_rows() -> list[FilmRow]:
     films, directors, actors, genres = _load_films_people_genres()
 
-    # Normalisation types
     films["tmdb_id"] = films["tmdb_id"].astype(int)
 
-    # Acteurs: limiter au TOP_ACTORS_PER_FILM selon cast_order si dispo
-    if "cast_order" in actors.columns and actors["cast_order"].notna().any():
-        actors = actors.sort_values(["film_tmdb_id", "cast_order"], na_position="last")
-        actors = actors.groupby("film_tmdb_id").head(TOP_ACTORS_PER_FILM)
-    else:
-        actors = actors.groupby("film_tmdb_id").head(TOP_ACTORS_PER_FILM)
+    if not actors.empty:
+        if "cast_order" in actors.columns and actors["cast_order"].notna().any():
+            actors = actors.sort_values(["film_tmdb_id", "cast_order"], na_position="last")
+            actors = actors.groupby("film_tmdb_id").head(TOP_ACTORS_PER_FILM)
+        else:
+            actors = actors.groupby("film_tmdb_id").head(TOP_ACTORS_PER_FILM)
 
-    # Agrégations en sets
-    dset = directors.groupby("film_tmdb_id")["director"].agg(lambda s: set(x for x in s if x)).reindex(films["tmdb_id"]).fillna(set())
-    aset = actors.groupby("film_tmdb_id")["actor"].agg(lambda s: set(x for x in s if x)).reindex(films["tmdb_id"]).fillna(set())
-    gset = genres.groupby("film_tmdb_id")["genre"].agg(lambda s: set(x for x in s if x)).reindex(films["tmdb_id"]).fillna(set())
+    idx = films["tmdb_id"]
+
+    if not directors.empty:
+        dset = directors.groupby("film_tmdb_id")["director"].agg(lambda s: set(x for x in s if x)).reindex(idx)
+        dset = dset.apply(lambda v: v if isinstance(v, set) else set())
+    else:
+        dset = pd.Series([set()] * len(idx), index=idx)
+
+    if not actors.empty:
+        aset = actors.groupby("film_tmdb_id")["actor"].agg(lambda s: set(x for x in s if x)).reindex(idx)
+        aset = aset.apply(lambda v: v if isinstance(v, set) else set())
+    else:
+        aset = pd.Series([set()] * len(idx), index=idx)
+
+    if not genres.empty:
+        gset = genres.groupby("film_tmdb_id")["genre"].agg(lambda s: set(x for x in s if x)).reindex(idx)
+        gset = gset.apply(lambda v: v if isinstance(v, set) else set())
+    else:
+        gset = pd.Series([set()] * len(idx), index=idx)
 
     rows: list[FilmRow] = []
     merged = films.set_index("tmdb_id")
@@ -153,11 +205,8 @@ def _prepare_rows() -> list[FilmRow]:
     return rows
 
 
+# ---------- Vectorisation ----------
 def _one_hot(values: list[set]) -> Tuple[sparse.csr_matrix, list[str]]:
-    """
-    Transforme une liste de sets (ex: genres par film) en matrice one-hot sparse + liste des colonnes.
-    """
-    # dictionnaire de feature -> colonne
     uniq = sorted(set().union(*values)) if values else []
     col_index = {v: i for i, v in enumerate(uniq)}
     data, rows, cols = [], [], []
@@ -177,17 +226,22 @@ def _build_cache():
     if not rows:
         raise RuntimeError("Catalogue vide : aucune recommandation possible.")
 
-    # Vecteurs
     G, gcols = _one_hot([r.genres for r in rows])
     D, dcols = _one_hot([r.directors for r in rows])
     A, acols = _one_hot([r.actors for r in rows])
 
-    X = sparse.hstack([
-        G.multiply(FEATURE_WEIGHTS["genres"]),
-        D.multiply(FEATURE_WEIGHTS["directors"]),
-        A.multiply(FEATURE_WEIGHTS["actors"]),
-    ], format="csr")
+    blocks = []
+    if G.shape[1] > 0:
+        blocks.append(G.multiply(FEATURE_WEIGHTS["genres"]))
+    if D.shape[1] > 0:
+        blocks.append(D.multiply(FEATURE_WEIGHTS["directors"]))
+    if A.shape[1] > 0:
+        blocks.append(A.multiply(FEATURE_WEIGHTS["actors"]))
 
+    if not blocks:
+        raise RuntimeError("Aucune feature (genres/réals/acteurs) disponible dans la base pour calculer des recommandations.")
+
+    X = sparse.hstack(blocks, format="csr")
     knn = NearestNeighbors(metric=KNN_METRIC)
     knn.fit(X)
 
@@ -218,11 +272,11 @@ def _ensure_cache():
 
 
 def _normalize_vector(v: sparse.csr_matrix) -> sparse.csr_matrix:
-    # normalisation L2 (évite la division par zéro)
-    norm = sparse.linalg.norm(v)
-    if norm == 0:
+    # petite normalisation L2 (évite la division par zéro)
+    n = sparse.linalg.norm(v)
+    if n == 0:
         return v
-    return v / norm
+    return v / n
 
 
 def _make_reason(rec: FilmRow, seed_rows: List[FilmRow]) -> str:
@@ -253,10 +307,10 @@ def recommend(seed_ids: List[int], k: int = 10) -> List[Dict[str, Any]]:
     - tmdb_id, title, poster_path, score (cosine), reason, overview
     """
     _ensure_cache()
-    rows: List[FilmRow] = _cache["rows"]
-    id_to_row = _cache["id_to_row"]
-    X = _cache["X"]
-    knn: NearestNeighbors = _cache["knn"]
+    rows: List[FilmRow] = _cache["rows"]  # type: ignore[index]
+    id_to_row = _cache["id_to_row"]       # type: ignore[index]
+    X = _cache["X"]                        # type: ignore[index]
+    knn: NearestNeighbors = _cache["knn"]  # type: ignore[assignment]
 
     seed_rows_idx = [id_to_row[i] for i in seed_ids if i in id_to_row]
     if not seed_rows_idx:
@@ -267,13 +321,11 @@ def recommend(seed_ids: List[int], k: int = 10) -> List[Dict[str, Any]]:
         P += X[idx, :]
     P = _normalize_vector(P)
 
-    # On demande plus large pour pouvoir filtrer les seeds ensuite
     n_neighbors = min(X.shape[0], k + len(seed_rows_idx) + 25)
     distances, indices = knn.kneighbors(P, n_neighbors=n_neighbors)
     distances, indices = distances[0], indices[0]
 
     seed_set = set(seed_rows_idx)
-    # Convertir distance cosine -> similarité (score)
     results = []
     for dist, idx in zip(distances, indices):
         if idx in seed_set:
@@ -291,3 +343,23 @@ def recommend(seed_ids: List[int], k: int = 10) -> List[Dict[str, Any]]:
         if len(results) >= k:
             break
     return results
+
+
+def debug_stats() -> dict:
+    _ensure_cache()
+    rows = _cache["rows"]
+    X = _cache["X"]
+
+    has_genre = sum(1 for r in rows if r.genres)
+    has_dir   = sum(1 for r in rows if r.directors)
+    has_act   = sum(1 for r in rows if r.actors)
+
+    return {
+        "num_films": len(rows),
+        "matrix_shape": [int(X.shape[0]), int(X.shape[1])],
+        "nonzero": int(X.nnz),
+        "films_with_genre": has_genre,
+        "films_with_director": has_dir,
+        "films_with_actor": has_act,
+        "sample_row": rows[0].__dict__ if rows else None,
+    }
