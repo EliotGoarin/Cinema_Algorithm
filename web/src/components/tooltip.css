@@ -1,0 +1,34 @@
+/* web/src/components/tooltip.css */
+.tooltip { position: relative; display: inline-block; }
+.movie-card { width: 150px; }
+.movie-poster { width: 100%; height: auto; border-radius: 8px; display: block; }
+.movie-title { margin-top: 8px; font-size: 0.95rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.tooltip .tooltip-content {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 110%;
+  min-width: 240px;
+  max-width: 320px;
+  padding: 10px 12px;
+  background: rgba(0,0,0,0.92);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  line-height: 1.25;
+  opacity: 0; pointer-events: none;
+  transition: opacity .12s ease;
+  box-shadow: 0 10px 26px rgba(0,0,0,.25);
+  z-index: 25;
+}
+.tooltip:hover .tooltip-content { opacity: 1; }
+
+.tooltip-reason { display: block; margin-bottom: 6px; }
+.tooltip-overview {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  opacity: 0.9;
+}

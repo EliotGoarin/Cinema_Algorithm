@@ -1,145 +1,293 @@
 # src/ml/recommender.py
-
 import os
-import requests
 import pandas as pd
-from sqlalchemy import create_engine
+from typing import List, Dict, Any, Tuple
+from dataclasses import dataclass
 from sklearn.neighbors import NearestNeighbors
-from dotenv import load_dotenv
+from scipy import sparse
+from sqlalchemy import create_engine, text
 
-# ----- Charger .env -----
-load_dotenv()
+# ----- CONFIG -----
+DB_URL = os.getenv("DB_URL", "mysql+mysqlconnector://root:password@localhost/movies")
+FEATURE_WEIGHTS = {
+    "genres": 1.0,
+    "directors": 1.3,
+    "actors": 1.1,
+}
+TOP_ACTORS_PER_FILM = 5  # limite acteurs par film pour éviter des vecteurs énormes
+KNN_METRIC = "cosine"
 
-TMDB_API_KEY = os.getenv("TMDB_API_KEY")
-DB_URL = os.getenv("DB_URL")
+_engine = None
+_cache = None  # type: Dict[str, Any]
 
-if not TMDB_API_KEY or not DB_URL:
-    raise ValueError("TMDB_API_KEY ou DB_URL manquant dans le fichier .env")
 
-# ----- Connexion MySQL -----
-engine = create_engine(DB_URL, echo=False)
+@dataclass
+class FilmRow:
+    tmdb_id: int
+    title: str
+    poster_path: str | None
+    overview: str | None
+    # sets
+    directors: set
+    actors: set
+    genres: set
 
-# ----- Charger les films avec réalisateurs et genres -----
-def load_movies() -> pd.DataFrame:
-    films_df = pd.read_sql(
+
+def _engine_once():
+    global _engine
+    if _engine is None:
+        _engine = create_engine(DB_URL, pool_pre_ping=True)
+    return _engine
+
+
+def _try_read_sql_candidates(sqls: List[str]) -> pd.DataFrame:
+    """Essaie plusieurs variantes de requêtes/tables (selon que tu utilises 'actor' ou 'actors', etc.)."""
+    eng = _engine_once()
+    last_err = None
+    for s in sqls:
+        try:
+            return pd.read_sql(text(s), eng)
+        except Exception as e:
+            last_err = e
+    raise last_err if last_err else RuntimeError("No SQL worked.")
+
+
+def _load_films_people_genres() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Charge films, acteurs, réalisateurs, genres depuis la DB (tolérant sur les noms de tables)."""
+    films = _try_read_sql_candidates([
         """
-        SELECT f.tmdb_id AS film_tmdb_id, f.title, d.name AS director
+        SELECT f.tmdb_id, f.title, f.poster_path, f.overview
         FROM film f
-        LEFT JOIN directors d ON f.tmdb_id = d.film_tmdb_id
         """,
-        engine,
-    )
+    ])
+    # Réalisateurs
+    directors = _try_read_sql_candidates([
+        # variante 1: table 'directors' (film_tmdb_id, name)
+        """
+        SELECT d.film_tmdb_id AS film_tmdb_id, d.name AS director
+        FROM directors d
+        """,
+        # variante 2: table 'director' (film_tmdb_id, name)
+        """
+        SELECT d.film_tmdb_id AS film_tmdb_id, d.name AS director
+        FROM director d
+        """,
+        # variante 3: table 'person' + role
+        """
+        SELECT fp.film_tmdb_id AS film_tmdb_id, p.name AS director
+        FROM film_person fp
+        JOIN person p ON p.tmdb_id = fp.person_tmdb_id
+        WHERE fp.role = 'director'
+        """,
+    ])
 
-    # Tenter de joindre les genres si les tables existent
-    try:
-        genres_df = pd.read_sql(
-            """
-            SELECT fg.film_id, GROUP_CONCAT(g.name SEPARATOR ',') AS genres
-            FROM film_genre fg
-            JOIN genre g ON fg.genre_id = g.id
-            GROUP BY fg.film_id
-            """,
-            engine,
-        )
-        df = films_df.merge(
-            genres_df, left_on="film_tmdb_id", right_on="film_id", how="left"
-        )
-    except Exception:
-        df = films_df.copy()
-        df["genres"] = ""
+    # Acteurs
+    actors = _try_read_sql_candidates([
+        # variante 1: table 'actors' (film_tmdb_id, name, cast_order)
+        """
+        SELECT a.film_tmdb_id AS film_tmdb_id, a.name AS actor, a.cast_order
+        FROM actors a
+        """,
+        # variante 2: table 'actor' (film_tmdb_id, name)
+        """
+        SELECT a.film_tmdb_id AS film_tmdb_id, a.name AS actor, NULL as cast_order
+        FROM actor a
+        """,
+        # variante 3: table 'film_person' + role
+        """
+        SELECT fp.film_tmdb_id AS film_tmdb_id, p.name AS actor, fp.cast_order
+        FROM film_person fp
+        JOIN person p ON p.tmdb_id = fp.person_tmdb_id
+        WHERE fp.role = 'actor'
+        """,
+    ])
 
-    # Nettoyage valeurs manquantes
-    df = df.fillna("")
-    # Remplacements sûrs (évite chained assignment)
-    df.loc[:, "director"] = df["director"].replace("", "Unknown")
-    df.loc[:, "genres"] = df["genres"].replace("", "Unknown")
+    # Genres
+    genres = _try_read_sql_candidates([
+        # film_genre + genre(name)
+        """
+        SELECT fg.film_tmdb_id, g.name AS genre
+        FROM film_genre fg
+        JOIN genre g ON g.id = fg.genre_id
+        """,
+        # film_genres avec nom déjà présent
+        """
+        SELECT fg.film_tmdb_id, fg.name AS genre
+        FROM film_genres fg
+        """,
+    ])
 
-    return df
+    return films, directors, actors, genres
 
-# ----- Préparation données -----
-df_movies = load_movies()
-print(f"🎬 {len(df_movies)} films chargés")
 
-# Encodage one-hot (réalisateur + genres)
-df_encoded_director = pd.get_dummies(df_movies["director"], prefix="director")
-df_encoded_genres = df_movies["genres"].str.get_dummies(sep=",")
-df_encoded = pd.concat([df_encoded_director, df_encoded_genres], axis=1)
+def _prepare_rows() -> list[FilmRow]:
+    films, directors, actors, genres = _load_films_people_genres()
 
-if df_encoded.empty:
-    raise ValueError("df_encoded est vide ! Vérifie la base de données et la requête SQL.")
+    # Normalisation types
+    films["tmdb_id"] = films["tmdb_id"].astype(int)
 
-# ----- Modèle k-NN -----
-# n_neighbors = k + 1 (pour pouvoir exclure le seed et garder k résultats)
-DEFAULT_K = 5
-n_neighbors = min(len(df_encoded), DEFAULT_K + 1)
-model = NearestNeighbors(n_neighbors=n_neighbors, metric="cosine")
-model.fit(df_encoded)
+    # Acteurs: limiter au TOP_ACTORS_PER_FILM selon cast_order si dispo
+    if "cast_order" in actors.columns and actors["cast_order"].notna().any():
+        actors = actors.sort_values(["film_tmdb_id", "cast_order"], na_position="last")
+        actors = actors.groupby("film_tmdb_id").head(TOP_ACTORS_PER_FILM)
+    else:
+        actors = actors.groupby("film_tmdb_id").head(TOP_ACTORS_PER_FILM)
 
-# ----- Infos film via TMDb -----
-def get_film_info(tmdb_id: int) -> dict:
-    url = f"https://api.themoviedb.org/3/movie/{tmdb_id}"
-    params = {"api_key": TMDB_API_KEY, "language": "fr-FR"}
-    try:
-        resp = requests.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-    except Exception:
-        return {"title": "Inconnu", "poster_path": None}
+    # Agrégations en sets
+    dset = directors.groupby("film_tmdb_id")["director"].agg(lambda s: set(x for x in s if x)).reindex(films["tmdb_id"]).fillna(set())
+    aset = actors.groupby("film_tmdb_id")["actor"].agg(lambda s: set(x for x in s if x)).reindex(films["tmdb_id"]).fillna(set())
+    gset = genres.groupby("film_tmdb_id")["genre"].agg(lambda s: set(x for x in s if x)).reindex(films["tmdb_id"]).fillna(set())
 
-    data = resp.json()
-    poster_url = (
-        f"https://image.tmdb.org/t/p/w200{data.get('poster_path')}"
-        if data.get("poster_path")
-        else None
-    )
-    return {"title": data.get("title", "Inconnu"), "poster_path": poster_url}
+    rows: list[FilmRow] = []
+    merged = films.set_index("tmdb_id")
+    for tmdb_id, f in merged.iterrows():
+        rows.append(FilmRow(
+            tmdb_id=int(tmdb_id),
+            title=(f.get("title") or "").strip(),
+            poster_path=(f.get("poster_path") or None),
+            overview=(f.get("overview") or None),
+            directors=set(dset.loc[tmdb_id]) if tmdb_id in dset.index else set(),
+            actors=set(aset.loc[tmdb_id]) if tmdb_id in aset.index else set(),
+            genres=set(gset.loc[tmdb_id]) if tmdb_id in gset.index else set(),
+        ))
+    return rows
 
-# ----- Fonction principale -----
-def get_recommendations(film_titles: list[str], k: int = DEFAULT_K) -> dict:
+
+def _one_hot(values: list[set]) -> Tuple[sparse.csr_matrix, list[str]]:
     """
-    film_titles: liste de titres (ex: ["Inception", "Avatar"])
-    k: nombre de recommandations souhaité
-    Retourne {"recommendations": [{"title":..., "poster_path":...}, ...]} ou {"error": "..."}
+    Transforme une liste de sets (ex: genres par film) en matrice one-hot sparse + liste des colonnes.
     """
-    if not film_titles:
-        return {"error": "Aucun titre fourni."}
+    # dictionnaire de feature -> colonne
+    uniq = sorted(set().union(*values)) if values else []
+    col_index = {v: i for i, v in enumerate(uniq)}
+    data, rows, cols = [], [], []
+    for r, s in enumerate(values):
+        for v in s:
+            c = col_index.get(v)
+            if c is not None:
+                data.append(1.0)
+                rows.append(r)
+                cols.append(c)
+    X = sparse.csr_matrix((data, (rows, cols)), shape=(len(values), len(uniq)), dtype="float32")
+    return X, uniq
 
-    valid_titles = set(df_movies["title"].tolist())
-    unknown_titles = [t for t in film_titles if t not in valid_titles]
-    if unknown_titles:
-        return {"error": f"Film(s) inconnu(s) : {unknown_titles}"}
 
-    # Seed = premier titre fourni (simple et robuste)
-    first_title = film_titles[0]
-    seed_row = df_movies[df_movies["title"] == first_title]
-    if seed_row.empty:
-        return {"error": f"Titre introuvable: {first_title}"}
+def _build_cache():
+    rows = _prepare_rows()
+    if not rows:
+        raise RuntimeError("Catalogue vide : aucune recommandation possible.")
 
-    first_tmdb_id = int(seed_row["film_tmdb_id"].values[0])
+    # Vecteurs
+    G, gcols = _one_hot([r.genres for r in rows])
+    D, dcols = _one_hot([r.directors for r in rows])
+    A, acols = _one_hot([r.actors for r in rows])
 
-    fav_encoded = df_encoded[df_movies["film_tmdb_id"] == first_tmdb_id]
-    if fav_encoded.empty:
-        return {"error": f"Aucune feature pour le film seed: {first_title}"}
+    X = sparse.hstack([
+        G.multiply(FEATURE_WEIGHTS["genres"]),
+        D.multiply(FEATURE_WEIGHTS["directors"]),
+        A.multiply(FEATURE_WEIGHTS["actors"]),
+    ], format="csr")
 
-    distances, indices = model.kneighbors(fav_encoded)
+    knn = NearestNeighbors(metric=KNN_METRIC)
+    knn.fit(X)
 
-    # Indices correspondants aux films recommandés (inclut le seed → on l'exclut)
-    idx_list = indices.flatten().tolist()
-    titles_list = df_movies.iloc[idx_list]["title"].tolist()
-    ids_list = df_movies.iloc[idx_list]["film_tmdb_id"].tolist()
+    id_to_row = {r.tmdb_id: i for i, r in enumerate(rows)}
+    row_to_id = {i: r.tmdb_id for i, r in enumerate(rows)}
 
-    # Exclure les films d'entrée (seed inclus) et limiter à k résultats
-    recs = []
-    seen = set(titles_list[:0])  # no-op, laissé pour clarté
-    for tmdb_id, title in zip(ids_list, titles_list):
-        if title in film_titles:
-            continue  # exclusion stricte des entrées
-        info = get_film_info(int(tmdb_id))
-        recs.append(info)
-        if len(recs) >= k:
+    return {
+        "rows": rows,
+        "X": X,
+        "knn": knn,
+        "id_to_row": id_to_row,
+        "row_to_id": row_to_id,
+        "feature_cols": {"genres": gcols, "directors": dcols, "actors": acols},
+    }
+
+
+def refresh_cache() -> int:
+    """Reconstruit l'index KNN. Retourne le nombre de films indexés."""
+    global _cache
+    _cache = _build_cache()
+    return len(_cache["rows"])
+
+
+def _ensure_cache():
+    global _cache
+    if _cache is None:
+        _cache = _build_cache()
+
+
+def _normalize_vector(v: sparse.csr_matrix) -> sparse.csr_matrix:
+    # normalisation L2 (évite la division par zéro)
+    norm = sparse.linalg.norm(v)
+    if norm == 0:
+        return v
+    return v / norm
+
+
+def _make_reason(rec: FilmRow, seed_rows: List[FilmRow]) -> str:
+    seed_dirs = set().union(*(s.directors for s in seed_rows))
+    seed_acts = set().union(*(s.actors for s in seed_rows))
+    seed_genr = set().union(*(s.genres for s in seed_rows))
+
+    common_dir = rec.directors & seed_dirs
+    common_act = rec.actors & seed_acts
+    common_gen = rec.genres & seed_genr
+
+    if common_dir:
+        return f"Même réalisateur : {next(iter(common_dir))}"
+    if len(common_act) >= 2:
+        sample = list(common_act)[:2]
+        return "Acteurs en commun : " + ", ".join(sample)
+    if common_act:
+        return "Acteur en commun : " + next(iter(common_act))
+    if common_gen:
+        sample = list(common_gen)[:2]
+        return "Genres proches : " + ", ".join(sample)
+    return "Proximité de style et thématiques"
+
+
+def recommend(seed_ids: List[int], k: int = 10) -> List[Dict[str, Any]]:
+    """
+    Retourne une liste de recommandations avec:
+    - tmdb_id, title, poster_path, score (cosine), reason, overview
+    """
+    _ensure_cache()
+    rows: List[FilmRow] = _cache["rows"]
+    id_to_row = _cache["id_to_row"]
+    X = _cache["X"]
+    knn: NearestNeighbors = _cache["knn"]
+
+    seed_rows_idx = [id_to_row[i] for i in seed_ids if i in id_to_row]
+    if not seed_rows_idx:
+        return []
+
+    P = sparse.csr_matrix((1, X.shape[1]), dtype="float32")
+    for idx in seed_rows_idx:
+        P += X[idx, :]
+    P = _normalize_vector(P)
+
+    # On demande plus large pour pouvoir filtrer les seeds ensuite
+    n_neighbors = min(X.shape[0], k + len(seed_rows_idx) + 25)
+    distances, indices = knn.kneighbors(P, n_neighbors=n_neighbors)
+    distances, indices = distances[0], indices[0]
+
+    seed_set = set(seed_rows_idx)
+    # Convertir distance cosine -> similarité (score)
+    results = []
+    for dist, idx in zip(distances, indices):
+        if idx in seed_set:
+            continue
+        r = rows[idx]
+        score = float(1.0 - dist)
+        results.append({
+            "tmdb_id": r.tmdb_id,
+            "title": r.title,
+            "poster_path": r.poster_path,
+            "overview": (r.overview or "")[:360].strip(),
+            "reason": _make_reason(r, [rows[i] for i in seed_rows_idx]),
+            "score": round(score, 4),
+        })
+        if len(results) >= k:
             break
-
-    return {"recommendations": recs}
-
-# Petit test manuel (décommente si tu veux tester rapidement)
-# if __name__ == "__main__":
-#     print(get_recommendations(["Inception"], k=5))
+    return results

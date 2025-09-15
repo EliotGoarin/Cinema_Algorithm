@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # Références de révision
 revision = "20250915_add_overview_to_film"
-down_revision = "<PUT_PREVIOUS_REVISION_ID_HERE>"
+down_revision = None
 branch_labels = None
 depends_on = None
 
