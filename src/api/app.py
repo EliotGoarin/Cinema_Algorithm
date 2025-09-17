@@ -123,3 +123,13 @@ def tmdb_search(q: str = Query(..., min_length=1), page: int = 1): return search
 
 @app.post("/tmdb/recommend")
 def tmdb_recommend(body: RecommendRequest): return post_recommend(body)
+
+from src.core.tmdb_client import movie_details, similar_movies
+
+@app.get("/tmdb/details")
+def tmdb_details(id: int):
+    return movie_details(int(id))
+
+@app.get("/tmdb/similar")
+def tmdb_similar(id: int, page: int = 1):
+    return similar_movies(int(id), page=page)

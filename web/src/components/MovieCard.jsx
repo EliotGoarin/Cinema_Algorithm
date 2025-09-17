@@ -1,35 +1,38 @@
-// web/src/components/MovieCard.jsx
-import React from "react";
-import "./tooltip.css";
+// src/components/MovieCard.jsx
+import { Link } from "react-router-dom";
 
-export default function MovieCard({
-  movie,
-  posterBaseUrl = "https://image.tmdb.org/t/p/w342",
-}) {
-  const { tmdb_id, title, poster_path, reason, overview } = movie;
-  const posterUrl = poster_path
-    ? (poster_path.startsWith("http") ? poster_path : `${posterBaseUrl}${poster_path}`)
-    : "/placeholder.png";
-
-  const safeOverview = (overview || "").trim();
-  const safeReason = (reason || "").trim();
+export default function MovieCard({ movie }) {
+  const id = movie.id || movie.tmdb_id || movie.tmdbId;
+  const title = movie.title || movie.original_title || "Titre inconnu";
+  const poster = movie.poster_path
+    ? `https://image.tmdb.org/t/p/w342${movie.poster_path}`
+    : null;
 
   return (
-    <div className="movie-card tooltip" data-testid={`movie-${tmdb_id}`}>
-      <img className="movie-poster" src={posterUrl} alt={title} loading="lazy" />
-      <div className="movie-title" title={title}>{title}</div>
-
-      {/* Tooltip au survol */}
-      <div
-        className="tooltip-content"
-        role="tooltip"
-        aria-label={`${safeReason ? safeReason + ". " : ""}${safeOverview}`}
-      >
-        {safeReason && <strong className="tooltip-reason">{safeReason}</strong>}
-        <div className="tooltip-overview">
-          {safeOverview || "Pas de description disponible."}
+    <Link to={`/film/${id}`} className="movie-card" style={{textDecoration:"none"}}>
+      <div style={{
+        border:"1px solid #e5e7eb",
+        borderRadius:12,
+        overflow:"hidden",
+        display:"flex",
+        flexDirection:"column",
+        height:"100%",
+        background:"#fff"
+      }}>
+        {poster ? (
+          <img src={poster} alt={`Affiche de ${title}`} style={{width:"100%", aspectRatio:"2/3", objectFit:"cover"}} />
+        ) : (
+          <div style={{width:"100%", aspectRatio:"2/3", display:"grid", placeItems:"center", background:"#f3f4f6"}}>
+            <span>Pas d’affiche</span>
+          </div>
+        )}
+        <div style={{padding:12}}>
+          <div style={{fontWeight:600, color:"#111827"}}>{title}</div>
+          {movie.release_date && (
+            <div style={{fontSize:12, color:"#6b7280"}}>{movie.release_date?.slice(0,4)}</div>
+          )}
         </div>
       </div>
-    </div>
+    </Link>
   );
 }
