@@ -4,21 +4,24 @@
   --card: #151925;
   --muted: #9aa4b2;
   --text: #e8ecf1;
-  --brand: #7c5cff;        /* accent violet */
-  --brand-2: #00d4ff;      /* accent cyan */
+  --brand: #7c5cff;
+  --brand-2: #00d4ff;
   --ring: #263246;
   --radius: 16px;
   --shadow: 0 8px 30px rgba(0,0,0,.35);
 
-  /* — Typo scale (modifie ici pour changer toutes les tailles) — */
-  --fs-base: 16px;                           /* texte par défaut */
-  --fs-hero: clamp(28px, 4.2vw, 128px);       /* gros titre de la hero */
-  --fs-brand: clamp(22px, 2.2vw, 64px);      /* titre dans le header */
-  --fs-section: clamp(20px, 2vw, 28px);      /* titres de sections */
-  --fs-input: 18px;                           /* champ de recherche */
-  --fs-button: 16px;                          /* bouton */
-  --fs-card-title: 15px;                      /* titres des cartes */
-  --fs-card-meta: 12px;                       /* meta des cartes */
+  /* Typo scale */
+  --fs-base: 16px;
+  --fs-hero: clamp(36px, 5.5vw, 64px);
+  --fs-brand: var(--fs-hero);
+  --fs-section: clamp(20px, 2vw, 28px);
+  --fs-input: 18px;
+  --fs-button: 16px;
+  --fs-card-title: 15px;
+  --fs-card-meta: 12px;
+
+  /* Espace adaptable sous le header */
+  --header-gap: clamp(28px, 4vw, 64px);
 }
 
 *{ box-sizing:border-box }
@@ -31,7 +34,7 @@ html,body{
 
 a{ color:inherit }
 
-/* FULL-WIDTH global */
+/* FULL-WIDTH */
 .container{
   width: 100%;
   max-width: none;
@@ -39,25 +42,29 @@ a{ color:inherit }
   padding: 24px clamp(12px, 3vw, 36px) 48px;
 }
 
-/* ---------------- Header : titre centré, même police ---------------- */
+/* ---------------- Header (brand centré, grande taille) ---------------- */
 .header{
   position: relative;
   display:flex; align-items:center; justify-content:flex-end; gap:16px;
-  padding: 16px 0;
+  padding: 10px 0 var(--header-gap);
 }
 .brand{
   position:absolute; left:50%; transform: translateX(-50%);
   display:flex; align-items:center; gap:12px; text-decoration:none;
 }
 .brand-badge{
-  width:36px; height:36px; border-radius:12px;
+  width: 44px; height: 44px;
+  border-radius: 14px;
   background: linear-gradient(135deg, var(--brand), var(--brand-2));
   box-shadow: 0 6px 18px rgba(124,92,255,.35);
 }
 .brand-title{
-  margin:0; font-family: inherit; font-weight:800; letter-spacing:.2px;
+  margin:0; font-family: inherit; font-weight: 900; letter-spacing:.2px;
   font-size: var(--fs-brand);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  line-height: 1.15;              /* ✅ un peu plus d’espace vertical */
+  white-space: nowrap;
+  overflow: visible;               /* ✅ ne pas rogner les descendantes */
+  text-overflow: clip;             /* (désactive l’ellipsis vertical/latéral) */
 }
 
 /* ---------------- Composants génériques ---------------- */
@@ -68,9 +75,6 @@ a{ color:inherit }
   box-shadow: var(--shadow);
 }
 
-.input-row{
-  display:flex; gap:12px; padding:16px; border-bottom:1px solid #1f2532;
-}
 .input{
   flex:1; background:#0f1320; color:var(--text);
   border:1px solid #20283a; outline:none;
@@ -90,15 +94,13 @@ a{ color:inherit }
 .btn:active{ transform: translateY(1px) }
 .btn.ghost{
   background: transparent; color: var(--text);
-  border:1px solid #2a3447;
-  box-shadow: none;
+  border:1px solid #2a3447; box-shadow: none;
 }
 
 .grid{
   display:grid; gap:16px; padding:16px;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
 }
-
 .card{
   background: var(--card);
   border:1px solid #1c2332;
@@ -106,17 +108,13 @@ a{ color:inherit }
   overflow:hidden;
   transition: transform .2s ease, border-color .2s, box-shadow .2s;
 }
-.card:hover{
-  transform: translateY(-2px);
-  border-color:#2b3a55;
-  box-shadow: 0 10px 26px rgba(0,0,0,.35);
-}
+.card:hover{ transform: translateY(-2px); border-color:#2b3a55; box-shadow: 0 10px 26px rgba(0,0,0,.35); }
 .card-img{ width:100%; display:block; aspect-ratio: 2/3; object-fit:cover; background:#0f1320; }
 .card-body{ padding:10px 12px }
 .card-title{ margin:0 0 4px; font-weight:700; font-size: var(--fs-card-title); line-height:1.25 }
 .card-meta{ margin:0; color:var(--muted); font-size: var(--fs-card-meta) }
 
-/* Titres de section : plus gros + une seule ligne */
+/* Titres */
 .section-title{
   margin: 18px 16px 8px;
   font-size: var(--fs-section);
@@ -124,29 +122,19 @@ a{ color:inherit }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Lien retour */
-.backlink{
-  display:inline-flex; align-items:center; gap:8px;
-  text-decoration:none; color:var(--muted);
-  margin: 12px 0 8px; font-weight:600;
-}
-.backlink:hover{ color: #cfd6df }
-
-/* Fiche film (page détail) */
-.hero{ display:grid; grid-template-columns: 220px 1fr; gap:20px; padding:18px; }
-.poster{ width:220px; border-radius:16px; overflow:hidden; border:1px solid #1f2532; background:#0f1320; }
-.meta p{ margin: 6px 0; color: var(--muted) }
-.hr{ height:1px; background:#1f2532; margin: 8px 16px }
-
-/* Hero compacte (enlève l’effet “vide” haut) */
+/* Hero compacte + centrée (AUTO-HEIGHT) */
 .panel.hero-compact { padding: 20px 24px; }
-
-/* Grand titre de la hero : même police, plus gros, sur une ligne */
+.panel.hero-center{
+  padding: clamp(16px, 2vw, 28px) clamp(16px, 2vw, 28px);
+  margin-top: clamp(6px, 1vw, 14px);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  text-align:center; gap: 14px;
+}
 .hero-title{
-  margin: 0 0 12px;
-  font-family: inherit; font-weight:800; letter-spacing:-0.3px; line-height:1;
+  margin: 0;
+  font-family: inherit; font-weight:900; letter-spacing:-0.3px;
   font-size: var(--fs-hero);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 /* Placeholders */
@@ -159,11 +147,12 @@ a{ color:inherit }
   border: 1px solid #1f2532;
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  height: clamp(420px, 55vh, 760px);
+  height: clamp(900px, 120vh, 1800px);
   overflow: hidden;
   padding: 12px;
+  margin-bottom: 56px;
 }
-.rail{ display: grid; gap: 12px; } /* colonnes définies inline */
+.rail{ display: grid; gap: 12px; }
 
 .rail-col{
   display: flex; flex-direction: column; gap: 12px;
@@ -173,7 +162,7 @@ a{ color:inherit }
 
 @keyframes railScroll{
   0% { transform: translateY(0); }
-  100% { transform: translateY(-50%); } /* contenu dupliqué */
+  100% { transform: translateY(-50%); }
 }
 
 .rail-card{

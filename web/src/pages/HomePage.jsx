@@ -39,13 +39,22 @@ export default function HomePage() {
 
   return (
     <>
-      <section className="panel hero-compact">
-        <h1 className="hero-title">Stop scrolling, start watching</h1>
-        <p style={{ margin: "0 0 18px", color: "var(--muted)" }}>
+      <section className="panel hero-compact hero-center">
+        <h1 className="hero-title">Ton prochain film préféré t'attend</h1>
+        <p style={{ margin: 0, color: "var(--muted)" }}>
           Recherche par titre, et découvre des idées adaptées à tes goûts.
         </p>
 
-        <form onSubmit={handleSubmit} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, maxWidth: 720 }}>
+        <form
+          onSubmit={handleSubmit}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto",
+            gap: 12,
+            width: "min(800px, 100%)",
+            margin: "10px auto 0"
+          }}
+        >
           <input
             className="input"
             style={{ padding: "18px 18px" }}
@@ -68,8 +77,7 @@ export default function HomePage() {
 
       {!hasSearched && (
         <section style={{ marginTop: 16 }}>
-          {/* ← désormais le mur tire /catalog/top-rated uniquement */}
-          <AutoMasonry limit={200} />
+          <AutoMasonry limit={220} />
         </section>
       )}
 
