@@ -1,4 +1,3 @@
-// src/pages/MoviePage.jsx
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getMovieDetails } from "../api/client.js";
@@ -11,61 +10,50 @@ export default function MoviePage() {
 
   useEffect(() => {
     let on = true;
-    async function load() {
+    (async () => {
       setLoading(true); setError("");
       try {
-        const data = await getMovieDetails(id);
-        if (on) setMovie(data);
-      } catch (err) {
-        if (on) setError(err.message || "Erreur de chargement");
+        const m = await getMovieDetails(id);
+        if (on) setMovie(m);
+      } catch (e) {
+        if (on) setError(e.message || "Erreur de chargement");
       } finally {
         if (on) setLoading(false);
       }
-    }
-    load();
+    })();
     return () => { on = false; };
   }, [id]);
 
-  if (loading) return <div style={{padding:16}}>Chargement…</div>;
-  if (error) return <div style={{padding:16, color:"#b91c1c"}}>{error}</div>;
-  if (!movie) return <div style={{padding:16}}>Film introuvable.</div>;
+  if (loading) return <div style={{ padding: 16 }}>Chargement…</div>;
+  if (error) return <div style={{ padding: 16, color: "#ff6b6b" }}>{error}</div>;
+  if (!movie) return <div style={{ padding: 16 }}>Film introuvable.</div>;
 
-  const title = movie.title || movie.original_title || "Titre inconnu";
+  const title = movie.title || movie.original_title || `Film #${id}`;
   const poster = movie.poster_path ? `https://image.tmdb.org/t/p/w500${movie.poster_path}` : null;
 
   return (
-    <div style={{maxWidth:1000, margin:"0 auto", padding:16}}>
-      <Link to="/" style={{display:"inline-block", marginBottom:12}}>← Retour</Link>
-      <div style={{display:"grid", gridTemplateColumns:"180px 1fr", gap:16}}>
-        {poster ? (
-          <img src={poster} alt={`Affiche de ${title}`} style={{width:180, borderRadius:12}}/>
-        ) : (
-          <div style={{width:180, aspectRatio:"2/3", background:"#f3f4f6", borderRadius:12, display:"grid", placeItems:"center"}}>Pas d’affiche</div>
-        )}
+    <div className="panel">
+      <Link to="/" className="backlink">← Retour</Link>
 
-        <div>
-          <h1 style={{marginTop:0}}>{title}</h1>
+      <div className="hero">
+        <div className="poster">
+          {poster ? <img src={poster} alt={title} style={{ width:"100%", display:"block" }} /> : null}
+        </div>
+        <div className="meta">
+          <h1 style={{ margin: "0 0 6px" }}>{title}</h1>
           {movie.release_date && <p>Sortie : {movie.release_date}</p>}
           {movie.genres && (
-            <p>Genres : {Array.isArray(movie.genres)
-              ? movie.genres.map(g=>g.name || g).join(", ")
-              : String(movie.genres)}
-            </p>
+            <p>Genres : {Array.isArray(movie.genres) ? movie.genres.map(g => g?.name || g).filter(Boolean).join(", ") : String(movie.genres)}</p>
           )}
-          {movie.director && <p>Réalisateur : {movie.director}</p>}
-          {movie.cast && movie.cast.length > 0 && (
-            <p>Acteurs : {movie.cast.slice(0,5).join(", ")}{movie.cast.length>5?"…":""}</p>
-          )}
-          {movie.overview && <p style={{marginTop:12, lineHeight:1.5}}>{movie.overview}</p>}
+          {movie.overview && <p style={{ lineHeight: 1.6, color:"#cbd5e1" }}>{movie.overview}</p>}
 
-          <Link
-            to={`/film/${id}/recommandations`}
-            style={{display:"inline-block", marginTop:16, padding:"10px 16px", borderRadius:8, border:"1px solid #111827", background:"#111827", color:"#fff"}}
-          >
-            Recommander
+          <Link to={`/film/${id}/recommandations`} className="btn" style={{ display:"inline-block", marginTop: 8 }}>
+            Voir les recommandations
           </Link>
         </div>
       </div>
+
+      <div className="hr" />
     </div>
   );
 }

@@ -1,31 +1,28 @@
-// web/src/api/client.js
-const API_BASE = import.meta.env?.VITE_API_URL || "http://localhost:8000";
+const BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-async function http(path, opts = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
-    ...opts,
-  });
+async function jsonOrThrow(res, label) {
   if (!res.ok) {
-    let text = "";
-    try { text = await res.text(); } catch {}
-    throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+    const txt = await res.text().catch(() => res.statusText);
+    throw new Error(`${label} failed: ${txt}`);
   }
-  const ct = res.headers.get("content-type") || "";
-  return ct.includes("application/json") ? res.json() : res.text();
+  return res.json();
 }
 
-// Recherche de films (GET /tmdb/search)
-export const searchMovies = (q, page = 1) =>
-  http(`/tmdb/search?q=${encodeURIComponent(q)}&page=${page}`);
+export async function searchMovies(q, page = 1) {
+  const r = await fetch(`${BASE}/tmdb/search?q=${encodeURIComponent(q)}&page=${page}`);
+  return jsonOrThrow(r, "Search");
+}
 
-// Détails d’un film (GET /tmdb/details)
-export const getMovieDetails = (id) =>
-  http(`/tmdb/details?id=${encodeURIComponent(id)}`);
+export async function getMovieDetails(id) {
+  const r = await fetch(`${BASE}/tmdb/details?id=${encodeURIComponent(id)}`);
+  return jsonOrThrow(r, "Details");
+}
 
-// Recommandations (POST /recommend)
-export const getRecommendations = (id, k = 12) =>
-  http(`/recommend`, {
+export async function postRecommend(seedIds, k = 12) {
+  const r = await fetch(`${BASE}/recommend`, {
     method: "POST",
-    body: JSON.stringify({ seed_ids: [Number(id)], k }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ seed_ids: seedIds.map(Number), k })
   });
+  return jsonOrThrow(r, "Recommend");
+}
