@@ -4,7 +4,7 @@
 Il combine les données de **The Movie Database (TMDb)** avec un pipeline d’ingestion, un backend **FastAPI** et un client **React** pour offrir une expérience complète : recherche de films, sélection de favoris et recommandations personnalisées.
 
 ---
-<img width="1912" height="865" alt="image" src="https://github.com/user-attachments/assets/c0144726-cdf9-4a3a-abbe-4649b776f541" />
+<img width="1883" height="863" alt="image" src="https://github.com/user-attachments/assets/bfd1b171-a2c0-4d97-8276-aa73b5b833b9" />
 ---
 
 
