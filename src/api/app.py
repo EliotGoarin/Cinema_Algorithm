@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import os
 import logging
-from typing import List, Dict, Any, Iterable
 import asyncio
 import numbers
+from typing import List, Dict, Any, Iterable
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,21 +13,20 @@ from pydantic import BaseModel
 
 from src.core.tmdb_client import search_movie, movie_details, similar_movies
 
-# --- Optionnel: moteur local de reco ---
+# ---------- Recommender (optionnel) ----------
 try:
-    from src.ml.recommender import recommend as recommend_db  # -> List[int] | List[dict]
+    from src.ml.recommender import recommend as recommend_db  # -> List[int] | List[dict] | mixed
     HAS_DB_RECO = True
 except Exception:
     HAS_DB_RECO = False
 
-# --- Logger ---
+# ---------- Logger ----------
 log = logging.getLogger("api")
 logging.basicConfig(level=logging.INFO)
 
-# --- App ---
+# ---------- App & CORS ----------
 app = FastAPI(title="Movie Algorithm API")
 
-# --- CORS ---
 origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
@@ -37,12 +36,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --------- Models ----------
+# ---------- Models ----------
 class RecommendBody(BaseModel):
     seed_ids: List[int]
     k: int = 12
 
-# --------- Utils ----------
+# ---------- Utils ----------
 def normalize_movie(m: Dict[str, Any]) -> Dict[str, Any]:
     """Format stable pour le front."""
     if not m:
@@ -53,7 +52,7 @@ def normalize_movie(m: Dict[str, Any]) -> Dict[str, Any]:
         "poster_path": m.get("poster_path"),
         "release_date": m.get("release_date"),
         "overview": m.get("overview"),
-        "genres": m.get("genres"),
+        "genres": m.get("genres"),  # TMDb details: [{id,name}]
     }
 
 def hydrate_ids(ids: Iterable[int]) -> List[Dict[str, Any]]:
@@ -70,8 +69,7 @@ def hydrate_ids(ids: Iterable[int]) -> List[Dict[str, Any]]:
     return out
 
 def _extract_id_from_dict(d: Dict[str, Any]) -> int | None:
-    """Tente de récupérer un ID TMDb depuis divers formats de dicts."""
-    # essais courants: id, tmdb_id, movie_id
+    """Tente de récupérer un ID TMDb depuis différents formats de dicts."""
     for key in ("id", "tmdb_id", "movie_id"):
         if key in d and d[key] is not None:
             try:
@@ -90,20 +88,18 @@ def coerce_to_id_list(candidates: Iterable[Any]) -> List[int]:
             try:
                 ids.append(int(x))
             except ValueError:
-                # chaîne non convertible -> ignore
                 continue
         elif isinstance(x, dict):
             mid = _extract_id_from_dict(x)
             if mid is not None:
                 ids.append(int(mid))
         else:
-            # numpy types, etc.
             try:
+                # numpy -> int, floats entiers, etc.
                 if isinstance(x, float) and x.is_integer():
                     ids.append(int(x))
                 else:
-                    # tenter cast générique
-                    ids.append(int(x))  # peut lever -> on ignore
+                    ids.append(int(x))
             except Exception:
                 continue
     return ids
@@ -118,12 +114,38 @@ def dedup_preserve_order(seq: Iterable[int]) -> List[int]:
             out.append(v)
     return out
 
-# --------- Health ----------
+def collect_similar_ids_from_tmdb(seeds: List[int], max_needed: int, max_pages: int = 5) -> List[int]:
+    """
+    Récupère des IDs depuis TMDb 'similar' en paginant sur plusieurs seeds et pages
+    jusqu'à atteindre max_needed (ou épuisement).
+    """
+    out: List[int] = []
+    seen = set()
+    for seed in seeds:
+        for page in range(1, max_pages + 1):
+            try:
+                sim = similar_movies(int(seed), page=page) or {}
+                results = sim.get("results") or []
+                if not results:
+                    break
+                for m in results:
+                    mid = m.get("id")
+                    if isinstance(mid, int) and mid not in seen:
+                        seen.add(mid)
+                        out.append(mid)
+                        if len(out) >= max_needed:
+                            return out
+            except Exception as e:
+                log.warning("TMDb similar fetch failed for seed=%s page=%s: %s", seed, page, e)
+                break
+    return out
+
+# ---------- Health ----------
 @app.get("/health")
 def health():
     return {"ok": True}
 
-# --------- TMDb pass-through ----------
+# ---------- TMDb Pass-through ----------
 @app.get("/tmdb/search")
 def tmdb_search(q: str = Query(..., min_length=1), page: int = 1):
     try:
@@ -163,10 +185,9 @@ def tmdb_similar(id: int, page: int = 1):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --------- Recommendations ----------
+# ---------- Recommendations ----------
 @app.post("/recommend")
 async def recommend(body: RecommendBody):
-    # seeds -> set d'ints
     seeds = [int(s) for s in body.seed_ids]
     if not seeds:
         raise HTTPException(status_code=400, detail="seed_ids is required")
@@ -175,30 +196,30 @@ async def recommend(body: RecommendBody):
     try:
         candidate_ids: List[int] = []
 
-        # 1) Essaye moteur local avec timeout 3s (peut renvoyer dicts/ints)
+        # 1) Essayer le moteur local (peut renvoyer < k, ou mixed types)
         if HAS_DB_RECO:
             try:
                 raw = await asyncio.wait_for(
-                    asyncio.to_thread(recommend_db, seeds, body.k + len(seeds)),
+                    asyncio.to_thread(recommend_db, seeds, body.k + len(seeds) * 2),
                     timeout=3.0,
                 )
                 candidate_ids = coerce_to_id_list(raw)
             except asyncio.TimeoutError:
-                log.warning("DB recommender timeout -> fallback TMDb similar")
+                log.warning("DB recommender timeout -> fallback TMDb")
             except Exception as e:
-                log.warning("DB recommender error -> fallback TMDb similar: %s", e)
+                log.warning("DB recommender error -> fallback TMDb: %s", e)
 
-        # 2) Fallback TMDb similar si vide
-        if not candidate_ids:
-            sim = similar_movies(seeds[0], page=1)
-            fallback_raw = [m for m in (sim.get("results") or [])]
-            candidate_ids = coerce_to_id_list(fallback_raw)
+        # 2) Compléter avec TMDb Similar paginé (multi-seeds) si insuffisant
+        need = max(0, body.k + len(seeds) * 2 - len(candidate_ids))
+        if need > 0:
+            tmdb_ids = collect_similar_ids_from_tmdb(seeds, max_needed=need, max_pages=5)
+            candidate_ids.extend(tmdb_ids)
 
         # 3) Dédup + exclusion seeds
         candidate_ids = dedup_preserve_order(candidate_ids)
         candidate_ids = [cid for cid in candidate_ids if cid not in seed_set]
 
-        # 4) Hydrater + limiter à k
+        # 4) Hydrater + limiter exactement à k
         full = hydrate_ids(candidate_ids)
         full = full[: body.k]
 
