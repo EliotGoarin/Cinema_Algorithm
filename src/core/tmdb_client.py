@@ -49,3 +49,10 @@ def trending_day(page: int = 1):
 
 def similar_movies(tmdb_id: int, page: int = 1):
     return tmdb_get(f"/movie/{tmdb_id}/similar", page=page)
+
+def popular_movies(page: int = 1):
+    url = f"{BASE}/movie/popular"
+    params = {"api_key": TMDB_API_KEY, "page": page, "language": LANG}
+    r = requests.get(url, params=params, timeout=10)
+    r.raise_for_status()
+    return r.json()

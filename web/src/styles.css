@@ -9,25 +9,44 @@
   --ring: #263246;
   --radius: 16px;
   --shadow: 0 8px 30px rgba(0,0,0,.35);
+
+  /* — Typo scale (modifie ici pour changer toutes les tailles) — */
+  --fs-base: 16px;                           /* texte par défaut */
+  --fs-hero: clamp(28px, 4.2vw, 128px);       /* gros titre de la hero */
+  --fs-brand: clamp(22px, 2.2vw, 64px);      /* titre dans le header */
+  --fs-section: clamp(20px, 2vw, 28px);      /* titres de sections */
+  --fs-input: 18px;                           /* champ de recherche */
+  --fs-button: 16px;                          /* bouton */
+  --fs-card-title: 15px;                      /* titres des cartes */
+  --fs-card-meta: 12px;                       /* meta des cartes */
 }
 
 *{ box-sizing:border-box }
 html,body,#root{ height:100% }
-html,body{ margin:0; background:var(--bg); color:var(--text); font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji","Segoe UI Emoji"; }
+html,body{
+  margin:0; background:var(--bg); color:var(--text);
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji","Segoe UI Emoji";
+  font-size: var(--fs-base);
+}
 
 a{ color:inherit }
 
+/* FULL-WIDTH global */
 .container{
-  width: min(1080px, 92vw);
-  margin: 0 auto;
-  padding: 24px 0 48px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 24px clamp(12px, 3vw, 36px) 48px;
 }
 
+/* ---------------- Header : titre centré, même police ---------------- */
 .header{
-  display:flex; align-items:center; justify-content:space-between; gap:16px;
+  position: relative;
+  display:flex; align-items:center; justify-content:flex-end; gap:16px;
   padding: 16px 0;
 }
 .brand{
+  position:absolute; left:50%; transform: translateX(-50%);
   display:flex; align-items:center; gap:12px; text-decoration:none;
 }
 .brand-badge{
@@ -35,8 +54,13 @@ a{ color:inherit }
   background: linear-gradient(135deg, var(--brand), var(--brand-2));
   box-shadow: 0 6px 18px rgba(124,92,255,.35);
 }
-.brand-title{ margin:0; font-weight:700; letter-spacing:.2px }
+.brand-title{
+  margin:0; font-family: inherit; font-weight:800; letter-spacing:.2px;
+  font-size: var(--fs-brand);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
+/* ---------------- Composants génériques ---------------- */
 .panel{
   background: var(--panel);
   border: 1px solid #1f2532;
@@ -52,6 +76,7 @@ a{ color:inherit }
   border:1px solid #20283a; outline:none;
   padding:12px 14px; border-radius:12px;
   transition: border-color .2s, box-shadow .2s;
+  font-size: var(--fs-input);
 }
 .input:focus{ border-color:#3552ff; box-shadow:0 0 0 4px rgba(53,82,255,.15) }
 .btn{
@@ -60,6 +85,7 @@ a{ color:inherit }
   padding:12px 16px; border-radius:12px; cursor:pointer;
   box-shadow: 0 6px 18px rgba(0,212,255,.25);
   transition: transform .06s ease, filter .2s ease;
+  font-size: var(--fs-button);
 }
 .btn:active{ transform: translateY(1px) }
 .btn.ghost{
@@ -85,18 +111,20 @@ a{ color:inherit }
   border-color:#2b3a55;
   box-shadow: 0 10px 26px rgba(0,0,0,.35);
 }
-.card-img{
-  width:100%; display:block; aspect-ratio: 2/3; object-fit:cover; background:#0f1320;
-}
+.card-img{ width:100%; display:block; aspect-ratio: 2/3; object-fit:cover; background:#0f1320; }
 .card-body{ padding:10px 12px }
-.card-title{ margin:0 0 4px; font-weight:700; font-size:15px; line-height:1.25 }
-.card-meta{ margin:0; color:var(--muted); font-size:12px }
+.card-title{ margin:0 0 4px; font-weight:700; font-size: var(--fs-card-title); line-height:1.25 }
+.card-meta{ margin:0; color:var(--muted); font-size: var(--fs-card-meta) }
 
+/* Titres de section : plus gros + une seule ligne */
 .section-title{
   margin: 18px 16px 8px;
-  font-size:18px; font-weight:700; color:#cfd6df;
+  font-size: var(--fs-section);
+  font-weight:800; color:#cfd6df;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
+/* Lien retour */
 .backlink{
   display:inline-flex; align-items:center; gap:8px;
   text-decoration:none; color:var(--muted);
@@ -104,12 +132,65 @@ a{ color:inherit }
 }
 .backlink:hover{ color: #cfd6df }
 
-.hero{
-  display:grid; grid-template-columns: 220px 1fr; gap:20px; padding:18px;
-}
-.poster{
-  width:220px; border-radius:16px; overflow:hidden; border:1px solid #1f2532; background:#0f1320;
-}
+/* Fiche film (page détail) */
+.hero{ display:grid; grid-template-columns: 220px 1fr; gap:20px; padding:18px; }
+.poster{ width:220px; border-radius:16px; overflow:hidden; border:1px solid #1f2532; background:#0f1320; }
 .meta p{ margin: 6px 0; color: var(--muted) }
-
 .hr{ height:1px; background:#1f2532; margin: 8px 16px }
+
+/* Hero compacte (enlève l’effet “vide” haut) */
+.panel.hero-compact { padding: 20px 24px; }
+
+/* Grand titre de la hero : même police, plus gros, sur une ligne */
+.hero-title{
+  margin: 0 0 12px;
+  font-family: inherit; font-weight:800; letter-spacing:-0.3px; line-height:1;
+  font-size: var(--fs-hero);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Placeholders */
+.input::placeholder { color: #7a8393; opacity: 1; }
+.input:focus::placeholder { color: transparent; }
+
+/* ---------------- Masonry / mur d’affiches ---------------- */
+.masonry-hero{
+  background: var(--panel);
+  border: 1px solid #1f2532;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  height: clamp(420px, 55vh, 760px);
+  overflow: hidden;
+  padding: 12px;
+}
+.rail{ display: grid; gap: 12px; } /* colonnes définies inline */
+
+.rail-col{
+  display: flex; flex-direction: column; gap: 12px;
+  animation: railScroll var(--dur, 60s) linear infinite;
+}
+.rail:hover .rail-col{ animation-play-state: paused; }
+
+@keyframes railScroll{
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); } /* contenu dupliqué */
+}
+
+.rail-card{
+  position: relative;
+  border-radius: 14px; overflow: hidden;
+  border: 1px solid #1c2332; background: #0f1320;
+  transition: transform .2s ease, border-color .2s, box-shadow .2s;
+}
+.rail-card:hover{ transform: translateY(-2px); border-color: #2b3a55; box-shadow: 0 10px 26px rgba(0,0,0,.35); }
+.rail-poster{ display:block; width:100%; aspect-ratio: 2/3; object-fit: cover; }
+
+/* badge de note */
+.badge{
+  position:absolute; top:8px; right:8px;
+  padding: 4px 6px; font-size: 12px; font-weight: 700;
+  border-radius: 8px; color:#0b0d11; background:#9ae6b4;
+  box-shadow: 0 6px 16px rgba(0,0,0,.25);
+}
+.badge.warn{ background:#fde68a; }
+.badge.low { background:#fecaca; }

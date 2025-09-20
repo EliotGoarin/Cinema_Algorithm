@@ -5,13 +5,21 @@ import os
 import logging
 import asyncio
 import numbers
-from typing import List, Dict, Any, Iterable
+from typing import List, Dict, Any, Iterable, Tuple, Optional
 
+import requests
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from src.core.tmdb_client import search_movie, movie_details, similar_movies
+
+# --- SQLAlchemy (DB) ---
+try:
+    from sqlalchemy import create_engine, text
+except Exception:
+    create_engine = None  # type: ignore
+    text = None  # type: ignore
 
 # ---------- Recommender (optionnel) ----------
 try:
@@ -43,7 +51,6 @@ class RecommendBody(BaseModel):
 
 # ---------- Utils ----------
 def normalize_movie(m: Dict[str, Any]) -> Dict[str, Any]:
-    """Format stable pour le front."""
     if not m:
         return {}
     return {
@@ -52,11 +59,11 @@ def normalize_movie(m: Dict[str, Any]) -> Dict[str, Any]:
         "poster_path": m.get("poster_path"),
         "release_date": m.get("release_date"),
         "overview": m.get("overview"),
-        "genres": m.get("genres"),  # TMDb details: [{id,name}]
+        "genres": m.get("genres"),
+        "local_score": m.get("local_score"),
     }
 
 def hydrate_ids(ids: Iterable[int]) -> List[Dict[str, Any]]:
-    """Transforme une liste d'IDs en films normalisés (ignore ceux sans titre)."""
     out: List[Dict[str, Any]] = []
     for mid in ids:
         try:
@@ -69,7 +76,6 @@ def hydrate_ids(ids: Iterable[int]) -> List[Dict[str, Any]]:
     return out
 
 def _extract_id_from_dict(d: Dict[str, Any]) -> int | None:
-    """Tente de récupérer un ID TMDb depuis différents formats de dicts."""
     for key in ("id", "tmdb_id", "movie_id"):
         if key in d and d[key] is not None:
             try:
@@ -79,7 +85,6 @@ def _extract_id_from_dict(d: Dict[str, Any]) -> int | None:
     return None
 
 def coerce_to_id_list(candidates: Iterable[Any]) -> List[int]:
-    """Convertit une liste mixte (ints, str, dicts, numpy types) en liste d'ints TMDb."""
     ids: List[int] = []
     for x in candidates or []:
         if isinstance(x, numbers.Integral):
@@ -95,7 +100,6 @@ def coerce_to_id_list(candidates: Iterable[Any]) -> List[int]:
                 ids.append(int(mid))
         else:
             try:
-                # numpy -> int, floats entiers, etc.
                 if isinstance(x, float) and x.is_integer():
                     ids.append(int(x))
                 else:
@@ -105,7 +109,6 @@ def coerce_to_id_list(candidates: Iterable[Any]) -> List[int]:
     return ids
 
 def dedup_preserve_order(seq: Iterable[int]) -> List[int]:
-    """Déduplique en préservant l'ordre d'apparition."""
     seen = set()
     out: List[int] = []
     for v in seq:
@@ -115,10 +118,6 @@ def dedup_preserve_order(seq: Iterable[int]) -> List[int]:
     return out
 
 def collect_similar_ids_from_tmdb(seeds: List[int], max_needed: int, max_pages: int = 5) -> List[int]:
-    """
-    Récupère des IDs depuis TMDb 'similar' en paginant sur plusieurs seeds et pages
-    jusqu'à atteindre max_needed (ou épuisement).
-    """
     out: List[int] = []
     seen = set()
     for seed in seeds:
@@ -140,12 +139,134 @@ def collect_similar_ids_from_tmdb(seeds: List[int], max_needed: int, max_pages: 
                 break
     return out
 
+# ---------- DB helpers (Top-rated locaux) ----------
+_DB_ENGINE = None
+
+def _get_db_engine():
+    global _DB_ENGINE
+    if _DB_ENGINE is not None:
+        return _DB_ENGINE
+    db_url = os.getenv("DB_URL")
+    if not db_url or create_engine is None:
+        return None
+    try:
+        _DB_ENGINE = create_engine(db_url, pool_pre_ping=True)
+    except Exception as e:
+        log.warning("DB engine init failed: %s", e)
+        _DB_ENGINE = None
+    return _DB_ENGINE
+
+def _score_scale() -> float:
+    try:
+        return float(os.getenv("CATALOG_SCORE_MAX", "100"))
+    except Exception:
+        return 100.0
+
+def _query_top_rated_ids(limit: int) -> List[Tuple[int, float]]:
+    """
+    Renvoie [(tmdb_id, score_brut)] triés par score décroissant depuis TA base.
+    Configure via env :
+      - CATALOG_TABLE (ex: 'films')
+      - CATALOG_ID_COL (ex: 'tmdb_id')
+      - CATALOG_SCORE_COL (ex: 'avg_rating' ou 'score')
+      - CATALOG_SCORE_MAX (ex: 100, 10, 5) -> scaling
+    Sinon on essaie plusieurs combinaisons usuelles.
+    """
+    eng = _get_db_engine()
+    if eng is None or text is None:
+        return []
+
+    t = os.getenv("CATALOG_TABLE")
+    c_id = os.getenv("CATALOG_ID_COL")
+    c_score = os.getenv("CATALOG_SCORE_COL")
+
+    candidates: List[Tuple[str, str, str]] = []
+    if t and c_id and c_score:
+        candidates.append((t, c_id, c_score))
+
+    candidates.extend([
+        ("film", "tmdb_id", "score"),
+        ("film", "tmdb_id", "rating"),
+        ("film", "tmdb_id", "avg_rating"),
+        ("films", "tmdb_id", "score"),
+        ("films", "tmdb_id", "avg_rating"),
+        ("movies", "tmdb_id", "score"),
+        ("movies", "tmdb_id", "rating"),
+        ("movies", "tmdb_id", "avg_rating"),
+        ("movie", "tmdb_id", "score"),
+        ("movie", "tmdb_id", "avg_rating"),
+    ])
+
+    for table, id_col, score_col in candidates:
+        try:
+            sql = text(
+                f"SELECT {id_col} AS id, {score_col} AS s "
+                f"FROM {table} "
+                f"WHERE {id_col} IS NOT NULL AND {score_col} IS NOT NULL "
+                f"ORDER BY {score_col} DESC "
+                f"LIMIT :lim"
+            )
+            with eng.connect() as conn:
+                rows = conn.execute(sql, {"lim": int(limit)}).fetchall()
+            out: List[Tuple[int, float]] = []
+            for r in rows:
+                try:
+                    mid = int(r[0]); sc = float(r[1])
+                    out.append((mid, sc))
+                except Exception:
+                    continue
+            if out:
+                log.info("Top-rated fetched from %s (%s/%s): %d rows", table, id_col, score_col, len(out))
+                return out
+        except Exception:
+            continue
+    return []
+
+def _load_top_ids_from_json(limit: int) -> List[Tuple[int, Optional[float]]]:
+    """
+    Fallback via JSON si DB indisponible :
+    TOP_RATED_IDS_PATH (par défaut data/top_ids.json)
+    JSON peut être:
+      - [123,456,...] ou
+      - [{"id":123,"score":97}, ...]
+    """
+    path = os.getenv("TOP_RATED_IDS_PATH", "data/top_ids.json")
+    if not os.path.exists(path):
+        return []
+    try:
+        import json
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        out: List[Tuple[int, Optional[float]]] = []
+        for x in data:
+            if isinstance(x, numbers.Integral):
+                out.append((int(x), None))
+            elif isinstance(x, dict):
+                mid = _extract_id_from_dict(x)
+                if mid is not None:
+                    sc = x.get("score")
+                    try:
+                        scf = float(sc) if sc is not None else None
+                    except Exception:
+                        scf = None
+                    out.append((mid, scf))
+        return out[: int(limit)]
+    except Exception as e:
+        log.warning("Failed to read TOP_RATED_IDS_PATH: %s", e)
+        return []
+
+def _attach_local_scores(movies: List[Dict[str, Any]], id_to_pct: Dict[int, int]) -> None:
+    for m in movies:
+        mid = m.get("id")
+        if isinstance(mid, int) and mid in id_to_pct:
+            m["local_score"] = id_to_pct[mid]
+
 # ---------- Health ----------
 @app.get("/health")
 def health():
     return {"ok": True}
 
-# ---------- TMDb Pass-through ----------
+# ---------- TMDb: Search / Details / Similar / Popular ----------
 @app.get("/tmdb/search")
 def tmdb_search(q: str = Query(..., min_length=1), page: int = 1):
     try:
@@ -155,12 +276,7 @@ def tmdb_search(q: str = Query(..., min_length=1), page: int = 1):
             for m in data.get("results", [])
             if (m.get("title") or m.get("original_title"))
         ]
-        return {
-            "query": q,
-            "page": page,
-            "results": results,
-            "total_results": data.get("total_results"),
-        }
+        return {"query": q, "page": page, "results": results, "total_results": data.get("total_results")}
     except Exception as e:
         log.exception("Search failed")
         raise HTTPException(status_code=500, detail=f"Search failed: {e}") from e
@@ -185,6 +301,63 @@ def tmdb_similar(id: int, page: int = 1):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/tmdb/popular")
+def tmdb_popular(page: int = 1):
+    try:
+        base = "https://api.themoviedb.org/3"
+        params = {
+            "api_key": os.getenv("TMDB_API_KEY"),
+            "page": page,
+            "language": os.getenv("TMDB_LANG", "fr-FR"),
+        }
+        r = requests.get(f"{base}/movie/popular", params=params, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        results = [
+            normalize_movie(m)
+            for m in data.get("results", [])
+            if (m.get("title") or m.get("original_title"))
+        ]
+        return {"page": page, "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Popular failed: {e}")
+
+# ---------- Catalog: Top-rated (LOCAL DB/JSON) ----------
+@app.get("/catalog/top-rated")
+def catalog_top_rated(limit: int = 160):
+    """
+    Renvoie les films les mieux notés de TA base, hydratés TMDb + 'local_score' (0..100).
+    Si DB vide/indispo -> JSON fallback (TOP_RATED_IDS_PATH ou data/top_ids.json). Sinon -> [].
+    """
+    try:
+        limit = max(10, int(limit))
+        pairs: List[Tuple[int, float]] = _query_top_rated_ids(limit)
+        id_to_pct: Dict[int, int] = {}
+
+        if not pairs:
+            json_pairs = _load_top_ids_from_json(limit)
+            if not json_pairs:
+                return {"results": []}
+            scale = _score_scale()
+            for mid, sc in json_pairs:
+                if sc is not None:
+                    id_to_pct[int(mid)] = max(0, min(100, int(round(float(sc) / scale * 100))))
+            ids = [int(mid) for mid, _ in json_pairs]
+        else:
+            scale = _score_scale()
+            for mid, sc in pairs:
+                id_to_pct[int(mid)] = max(0, min(100, int(round(float(sc) / scale * 100))))
+            ids = [int(mid) for mid, _ in pairs]
+
+        full = hydrate_ids(ids)
+        if id_to_pct:
+            _attach_local_scores(full, id_to_pct)
+
+        return {"results": full}
+    except Exception as e:
+        log.exception("catalog_top_rated failed")
+        raise HTTPException(status_code=500, detail=f"Top-rated failed: {e}") from e
+
 # ---------- Recommendations ----------
 @app.post("/recommend")
 async def recommend(body: RecommendBody):
@@ -192,11 +365,9 @@ async def recommend(body: RecommendBody):
     if not seeds:
         raise HTTPException(status_code=400, detail="seed_ids is required")
     seed_set = set(seeds)
-
     try:
         candidate_ids: List[int] = []
 
-        # 1) Essayer le moteur local (peut renvoyer < k, ou mixed types)
         if HAS_DB_RECO:
             try:
                 raw = await asyncio.wait_for(
@@ -209,17 +380,14 @@ async def recommend(body: RecommendBody):
             except Exception as e:
                 log.warning("DB recommender error -> fallback TMDb: %s", e)
 
-        # 2) Compléter avec TMDb Similar paginé (multi-seeds) si insuffisant
         need = max(0, body.k + len(seeds) * 2 - len(candidate_ids))
         if need > 0:
             tmdb_ids = collect_similar_ids_from_tmdb(seeds, max_needed=need, max_pages=5)
             candidate_ids.extend(tmdb_ids)
 
-        # 3) Dédup + exclusion seeds
         candidate_ids = dedup_preserve_order(candidate_ids)
         candidate_ids = [cid for cid in candidate_ids if cid not in seed_set]
 
-        # 4) Hydrater + limiter exactement à k
         full = hydrate_ids(candidate_ids)
         full = full[: body.k]
 

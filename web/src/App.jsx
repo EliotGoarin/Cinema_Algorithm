@@ -3,16 +3,18 @@ import HomePage from "./pages/HomePage.jsx";
 import MoviePage from "./pages/MoviePage.jsx";
 import RecommendationsPage from "./pages/RecommendationsPage.jsx";
 
+// ...
 function Frame({ children }) {
   return (
     <div className="container">
       <header className="header">
-        <Link to="/" className="brand">
+        <span /> {/* colonne gauche vide pour le centrage */}
+        <a href="/" className="brand">
           <div className="brand-badge" />
           <h1 className="brand-title">Movie Algorithm</h1>
-        </Link>
+        </a>
         <nav>
-          <a className="btn ghost" href="https://www.themoviedb.org/" target="_blank">TMDb</a>
+          <a className="btn ghost" href="https://www.themoviedb.org/" target="_blank" rel="noreferrer">TMDb</a>
         </nav>
       </header>
       {children}
@@ -22,6 +24,8 @@ function Frame({ children }) {
     </div>
   );
 }
+// ...
+
 
 export default function App() {
   return (
